@@ -1,0 +1,120 @@
+<header class="heading">
+  <div>
+    <p class="eyebrow">ETAPA 1</p>
+    <h1>Servidores</h1>
+    <p>Administra las conexiones FTP/FTPS de tus sitios.</p>
+  </div>
+  <button type="button" (click)="load()" [disabled]="busy()">Actualizar lista</button>
+</header>
+
+@if (error()) {
+  <p class="alert error" role="alert">{{ error() }}</p>
+}
+@if (notice()) {
+  <p class="alert success" role="status">{{ notice() }}</p>
+}
+
+<div class="layout">
+  <section class="panel" aria-labelledby="form-title">
+    <h2 id="form-title">{{ editingId() === null ? 'Nuevo servidor' : 'Editar servidor' }}</h2>
+    <form [formGroup]="form" (ngSubmit)="save()">
+      <fieldset [disabled]="busy()">
+        <label for="name">Nombre</label>
+        <input id="name" formControlName="name" maxlength="255" required placeholder="Mi sitio - Produccion">
+
+        <label for="host">Host (sin ftp://)</label>
+        <input id="host" formControlName="host" maxlength="253" required placeholder="ftp.tusitio.com" autocapitalize="none" spellcheck="false">
+
+        <label for="port">Puerto</label>
+        <input id="port" type="number" formControlName="port" min="1" max="65535" step="1" required>
+
+        <label for="username">Usuario FTP</label>
+        <input id="username" formControlName="username" maxlength="255" required autocomplete="off" autocapitalize="none" spellcheck="false">
+
+        <label for="password">Contrasena</label>
+        <input id="password" type="password" formControlName="password" maxlength="4096" autocomplete="new-password" [required]="editingId() === null" aria-describedby="password-help">
+        <small id="password-help">{{ editingId() === null ? 'Se guarda cifrada y nunca se devuelve al navegador.' : 'Dejala vacia para conservar la contrasena actual.' }}</small>
+
+        <label for="remote_path">Carpeta remota</label>
+        <input id="remote_path" formControlName="remote_path" maxlength="1024" required placeholder="/public_html" spellcheck="false">
+        <small>Ruta absoluta dentro de la cuenta FTP. Por ejemplo: /public_html.</small>
+
+        <label class="check"><input type="checkbox" formControlName="use_ftps"> Usar FTPS explicito (recomendado)</label>
+        @if (!form.controls.use_ftps.value) {
+          <p class="warning">FTP sin TLS envia usuario y contrasena sin cifrar.</p>
+        }
+        <label class="check"><input type="checkbox" formControlName="passive"> Modo pasivo (recomendado)</label>
+
+        <div class="actions">
+          <button class="primary" type="submit">{{ saving() ? 'Guardando...' : 'Guardar servidor' }}</button>
+          @if (editingId() !== null) {
+            <button type="button" (click)="cancel()">Cancelar edicion</button>
+          }
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="list-title">
+    <h2 id="list-title">Conexiones guardadas</h2>
+    @if (loading()) {
+      <p role="status">Cargando servidores...</p>
+    } @else if (servers().length === 0 && !error()) {
+      <p>No hay servidores guardados. Agrega el primero desde el formulario.</p>
+    }
+    <div class="server-list">
+      @for (server of servers(); track server.id) {
+        <article class="server">
+          <div class="server-heading">
+            <h3>{{ server.name }}</h3>
+            <span class="badge" [class.insecure]="!server.use_ftps">{{ server.use_ftps ? 'FTPS' : 'FTP' }}</span>
+          </div>
+          <p class="address">{{ server.host }}:{{ server.port }}</p>
+          <dl>
+            <dt>Usuario</dt><dd>{{ server.username }}</dd>
+            <dt>Carpeta</dt><dd>{{ server.remote_path }}</dd>
+            <dt>Modo</dt><dd>{{ server.passive ? 'Pasivo' : 'Activo' }}</dd>
+          </dl>
+          <div class="actions">
+            <a class="button-link server-explorer" [routerLink]="['/server-files', server.id]" target="_blank" rel="noopener noreferrer">Explorador de archivos</a>
+            <button type="button" (click)="test(server)" [disabled]="busy()">{{ testingId() === server.id ? 'Probando...' : 'Probar conexion' }}</button>
+            <button type="button" (click)="edit(server)" [disabled]="busy()">Editar</button>
+            <button class="danger" type="button" (click)="requestDelete(server)" [disabled]="busy()">Eliminar</button>
+          </div>
+        </article>
+      }
+    </div>
+
+    @if (testingId() !== null) {
+      <p role="status">Conectando y listando la carpeta remota. Puede tardar unos segundos...</p>
+    }
+    @if (deleteCandidate(); as candidate) {
+      <div class="alert warning" role="alert">
+        <p>¿Eliminar el servidor "{{ candidate.name }}"? Esta accion no elimina archivos del hosting.</p>
+        <div class="actions">
+          <button class="danger" type="button" (click)="remove()" [disabled]="busy()">{{ deletingId() !== null ? 'Eliminando...' : 'Confirmar eliminacion' }}</button>
+          <button type="button" (click)="deleteCandidate.set(null)" [disabled]="busy()">Cancelar</button>
+        </div>
+      </div>
+    }
+    @if (result(); as testResult) {
+      <div class="alert success" role="status">
+        <h3>{{ testResult.name }}: conexion correcta</h3>
+        <p>{{ testResult.connection.message }}</p>
+        <p>{{ testResult.connection.protocol }} · {{ testResult.connection.remote_path }} · {{ testResult.connection.entries.length }} entradas</p>
+        @if (testResult.connection.entries.length > 0) {
+          <details>
+            <summary>Ver listado remoto</summary>
+            <ul>
+              @for (entry of testResult.connection.entries; track $index) {
+                <li>{{ entry }}</li>
+              }
+            </ul>
+          </details>
+        } @else {
+          <p>La carpeta esta vacia.</p>
+        }
+      </div>
+    }
+  </section>
+</div>

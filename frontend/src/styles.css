@@ -1,0 +1,3 @@
+html { color-scheme: light; }
+body { margin: 0; background: #f5f7fb; color: #25324b; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+*:focus-visible { outline: 3px solid #818cf8; outline-offset: 3px; }

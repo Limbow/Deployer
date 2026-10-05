@@ -1,0 +1,136 @@
+<div class="history-page">
+  <header class="heading">
+    <div>
+      <p class="eyebrow">ETAPA 6</p>
+      <h1>Historial de deploys</h1>
+      <p>Consulta el estado, los archivos, los cambios y el registro de cada publicación.</p>
+    </div>
+    <div class="actions">
+      <a routerLink="/builds">Preparar deploy</a>
+      <button type="button" (click)="load()" [disabled]="loading() || loadingProjects()">Actualizar</button>
+    </div>
+  </header>
+
+  @if (projectError()) {
+    <div class="alert error" role="alert">No se pudo cargar la lista de proyectos: {{ projectError() }}. Puedes consultar el historial completo.</div>
+  }
+  @if (error()) {
+    <div class="alert error" role="alert">{{ error() }}</div>
+  }
+
+  <section class="panel filters" aria-label="Filtros del historial">
+    <label for="history-project">Proyecto</label>
+    <select id="history-project" [value]="projectId()" (change)="filterProject($event)" [disabled]="loadingProjects() || loading() || loadingDetail()">
+      <option value="0">Todos los proyectos</option>
+      @for (project of projects(); track project.id) {
+        <option [value]="project.id">{{ project.name }} · {{ project.type === 'laravel' ? 'Laravel' : 'Angular' }}</option>
+      }
+    </select>
+    <p>{{ meta().total }} deploy{{ meta().total === 1 ? '' : 's' }} en el historial.</p>
+  </section>
+
+  <div class="history-layout">
+    <section class="panel history-list-panel" aria-labelledby="history-list-title">
+      <h2 id="history-list-title">Publicaciones</h2>
+      @if (loading() || loadingProjects()) {
+        <p role="status">Cargando historial...</p>
+      } @else if (deploys().length === 0) {
+        <p>No hay deploys para este filtro.</p>
+      } @else {
+        <div class="history-list">
+          @for (deploy of deploys(); track deploy.id) {
+            <button
+              type="button"
+              class="history-item"
+              [class.selected]="selectedDeployId() === deploy.id"
+              [attr.aria-pressed]="selectedDeployId() === deploy.id"
+              [disabled]="loadingDetail()"
+              (click)="selectDeploy(deploy)">
+              <span class="history-item-heading">
+                <strong>{{ projectName(deploy) }} · v{{ deploy.version }}</strong>
+                <span class="status-badge" [class]="statusClass(deploy.status)">{{ statusLabel(deploy.status) }}</span>
+              </span>
+              <span>{{ deploy.server_name || 'Servidor eliminado' }} · {{ formatDate(deploy.created_at) }}</span>
+              <span class="history-counts">
+                {{ deploy.files_count }} archivos · {{ deploy.uploaded_files_count }} subidos ·
+                {{ deploy.deleted_files_count }} borrados · {{ deploy.absent_files_count }} ya ausentes
+              </span>
+              @if (deploy.changes) { <span class="change-preview">{{ deploy.changes }}</span> }
+            </button>
+          }
+        </div>
+        <div class="pagination" aria-label="Paginación del historial">
+          <button type="button" (click)="previousPage()" [disabled]="loading() || meta().current_page <= 1">Anterior</button>
+          <span>Página {{ meta().current_page }} de {{ meta().last_page }}</span>
+          <button type="button" (click)="nextPage()" [disabled]="loading() || meta().current_page >= meta().last_page">Siguiente</button>
+        </div>
+      }
+    </section>
+
+    <section class="panel deploy-detail" aria-labelledby="detail-title">
+      @if (loadingDetail()) {
+        <h2 id="detail-title">Detalle del deploy</h2>
+        <p role="status">Cargando detalle...</p>
+      } @else if (detailError()) {
+        <h2 id="detail-title">No se pudo cargar el detalle</h2>
+        <div class="alert error" role="alert">{{ detailError() }}</div>
+      } @else if (selectedDeploy(); as deploy) {
+        <header class="detail-heading">
+          <div>
+            <h2 id="detail-title">Deploy #{{ deploy.id }} · v{{ deploy.version }}</h2>
+            <span class="status-badge" [class]="statusClass(deploy.status)">{{ statusLabel(deploy.status) }}</span>
+          </div>
+          <button type="button" (click)="closeDetail()">Cerrar</button>
+        </header>
+        <dl>
+          <dt>Proyecto</dt><dd>{{ deploy.project_name || 'Proyecto eliminado' }}</dd>
+          <dt>Servidor</dt><dd>{{ deploy.server_name || 'Servidor eliminado' }}</dd>
+          <dt>Creado</dt><dd>{{ formatDate(deploy.created_at) }}</dd>
+          <dt>Inicio</dt><dd>{{ formatDate(deploy.started_at) }}</dd>
+          <dt>Finalización</dt><dd>{{ formatDate(deploy.finished_at) }}</dd>
+          <dt>Duración</dt><dd>{{ formatDuration(deploy.duration_ms) }}</dd>
+          <dt>Destino</dt><dd>{{ deploy.remote_path }}</dd>
+          @if (deploy.public_remote_path) {
+            <dt>Destino public</dt><dd>{{ deploy.public_remote_path }}</dd>
+          }
+          @if (deploy.version_file_name) {
+            <dt>Archivo de versión</dt><dd>{{ deploy.version_file_name }}</dd>
+          }
+          @if (deploy.git_commit) {
+            <dt>Commit</dt><dd><code>{{ deploy.git_commit }}</code></dd>
+          }
+          @if (deploy.changes) {
+            <dt>Cambios</dt><dd class="change-detail">{{ deploy.changes }}</dd>
+          }
+        </dl>
+
+        <h3>Archivos ({{ deploy.files.length }})</h3>
+        @if (deploy.files.length === 0) {
+          <p>Este deploy no registró archivos.</p>
+        } @else {
+          <div class="files-list">
+            @for (file of deploy.files; track file.id) {
+              <article class="file-entry">
+                <div>
+                  <strong>{{ file.relative_path }}</strong>
+                  <span class="status-badge" [class]="fileStatusClass(file)">{{ fileStatusLabel(file) }}</span>
+                </div>
+                <p>{{ file.remote_path }} · {{ file.size }} bytes</p>
+                @if (file.backup_path) { <p>Respaldo: {{ file.backup_path }}</p> }
+                @if (file.error) { <p class="file-error">{{ file.error }}</p> }
+              </article>
+            }
+          </div>
+        }
+
+        <details class="deploy-log" open>
+          <summary>Registro del deploy</summary>
+          <pre>{{ deploy.log || 'No hay mensajes registrados.' }}</pre>
+        </details>
+      } @else {
+        <h2 id="detail-title">Detalle del deploy</h2>
+        <p>Selecciona una publicación para consultar los archivos y el registro completo.</p>
+      }
+    </section>
+  </div>
+</div>

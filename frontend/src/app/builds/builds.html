@@ -1,0 +1,72 @@
+<header class="heading">
+  <div><p class="eyebrow">ETAPA 5</p><h1>Preparar deploy</h1><p>Compila, revisa los archivos y confirma la publicacion por FTP/FTPS.</p></div>
+  <div class="actions">
+    <button type="button" (click)="load()" [disabled]="busy() || active() || deployActive()">Actualizar proyectos</button>
+    <a routerLink="/projects">Volver a proyectos</a>
+  </div>
+</header>
+<ol class="steps" aria-label="Pasos del asistente">
+  <li>1. Proyecto y servidor</li><li>2. Build</li><li>3. Archivos</li><li>4. Deploy</li>
+</ol>
+@if (error()) { <p class="alert error" role="alert">{{ error() }}</p> }
+@if (notice()) { <p class="alert success" role="status">{{ notice() }}</p> }
+<section class="panel">
+  <h2>1. Proyecto y servidor</h2>
+  @if (loading()) { <p role="status">Cargando proyectos...</p> }
+  <label for="build-project">Proyecto</label>
+  <select id="build-project" [ngModel]="projectId()" (ngModelChange)="selectProject($event)" [disabled]="busy() || active() || deployActive()">
+    <option [ngValue]="0">Seleccionar proyecto</option>
+    @for (project of projects(); track project.id) { <option [ngValue]="project.id">{{ project.name }} ({{ project.type }})</option> }
+  </select>
+  @if (!loading() && projects().length === 0) { <p>Agrega un proyecto desde Proyectos para comenzar.</p> }
+  @if (project(); as selected) {
+    <label for="build-server">Servidor (no requerido para compilar)</label>
+    <select id="build-server" [ngModel]="serverId()" (ngModelChange)="serverId.set($event)" [disabled]="busy() || active() || deployActive()">
+      <option [ngValue]="0">Solo build local</option>
+      @for (server of selected.servers; track server.id) { <option [ngValue]="server.id">{{ server.name }} · {{ server.pivot.label }}</option> }
+    </select>
+    <p class="path">{{ selected.local_path }}</p>
+  }
+</section>
+@if (project(); as selected) {
+  <section class="panel build-panel">
+    <h2>2. Build local</h2>
+    <p>Comando guardado:</p><pre class="command">{{ selected.build_command || 'Sin build configurado (Laravel)' }}</pre>
+    <p class="path">Salida configurada: {{ selected.build_output_path }}</p>
+    <p>El comando puede modificar la carpeta local y borrar su salida anterior. No edites ni ejecutes otro build de este proyecto mientras esta en curso.</p>
+    @if (selected.build_command) {
+      <label class="check"><input type="checkbox" [ngModel]="confirmed()" (ngModelChange)="confirmed.set($event)" [disabled]="busy() || active() || deployActive()"> Confirmo ejecutar este comando local de confianza</label>
+      <div class="actions">
+        <button class="primary" type="button" (click)="start()" [disabled]="busy() || active() || deployActive() || !confirmed()">{{ submitting() ? 'Enviando...' : 'Ejecutar build' }}</button>
+        <button type="button" (click)="skip()" [disabled]="busy() || active() || deployActive()">Omitir build</button>
+      </div>
+    } @else {
+      <p>Laravel puede usar sus archivos fuente sin compilar. Si requiere assets, configura un comando en Proyectos.</p>
+      <button type="button" (click)="skip()" [disabled]="busy() || active() || deployActive()">Continuar sin build</button>
+    }
+    @if (latestLoading()) { <p role="status">Consultando ultimo build...</p> }
+    @if (build(); as current) {
+      <h3 role="status">Build #{{ current.id }} · {{ statusLabel(current.status) }}</h3>
+      @if (current.duration_ms !== null) { <p>Duracion: {{ (current.duration_ms / 1000).toFixed(1) }} s · Codigo de salida: {{ current.exit_code ?? 'No disponible' }}</p> }
+      @if (current.status === 'queued') {
+        <p class="warning">Esperando al worker. Si no comienza, inicia php artisan queue:work --timeout=3660 --tries=1 en backend. Un build en cola no significa que haya fallado.</p>
+      }
+      <p class="path">Comando ejecutado: {{ current.command }}</p>
+      <pre class="log" tabindex="0" aria-label="Log del build">{{ current.log || 'Sin salida todavia.' }}</pre>
+      @if (current.status === 'failed') { <p class="alert error">El build fallo. Revisa el log y la configuracion antes de volver a intentarlo.</p> }
+      @if (current.status === 'success') { <p class="alert success">Build finalizado. Puedes seleccionar archivos en el paso 3.</p> }
+      @if (pollFailed()) { <button type="button" (click)="watch()">Reanudar seguimiento</button> }
+    }
+    <small>La salida se consulta cada 1,5 segundos. Cerrar la pagina no cancela el job; al elegir el proyecto nuevamente se recupera su ultimo build.</small>
+  </section>
+  <app-file-selection
+    [projectId]="projectId()"
+    [serverId]="serverId()"
+    [buildId]="build()?.status === 'success' ? build()?.id ?? null : null"
+    [currentVersion]="project()?.current_version ?? ''"
+    [serverName]="selectedServerName()"
+    [enabled]="fileReady() && !busy() && !active()"
+    [revision]="fileRevision()"
+    (deployActivity)="deployActive.set($event)"
+  />
+}

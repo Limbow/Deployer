@@ -1,0 +1,153 @@
+<header class="heading">
+  <div>
+    <p class="eyebrow">EXPLORADOR REMOTO</p>
+    <h1>{{ directory()?.server_name ?? 'Archivos del servidor' }}</h1>
+  </div>
+  <button type="button" (click)="refresh()" [disabled]="busy()">Actualizar</button>
+</header>
+
+<div class="toolbar">
+  <a class="button-link" routerLink="/servers">Volver a servidores</a>
+  @if (directory(); as current) {
+    @if (current.parent_relative_path !== null) {
+      <button type="button" (click)="goUp()" [disabled]="busy()">Subir un nivel</button>
+    }
+  }
+</div>
+
+@if (error()) {
+  <p class="alert error" role="alert">{{ error() }}</p>
+}
+@if (notice()) {
+  <p class="alert success" role="status">{{ notice() }}</p>
+}
+@if ((loading() || rootLoading()) && !directory()) {
+  <p role="status">Conectando al servidor y leyendo la carpeta...</p>
+}
+@if (loading() && directory()) {
+  <p role="status">Actualizando listado...</p>
+}
+
+<div class="explorer-layout">
+  <aside class="panel tree-panel" aria-labelledby="tree-heading">
+    <h2 id="tree-heading">Directorios</h2>
+    @if (folderTree(); as root) {
+      <nav class="folder-tree" aria-label="Arbol de carpetas FTP">
+        @for (item of visibleFolders(); track item.node.relativePath) {
+          <div class="tree-row" [style.padding-left.rem]="item.depth * .75">
+            @if (hasChildren(item.node)) {
+              <button
+                class="tree-toggle"
+                type="button"
+                [disabled]="busy()"
+                [attr.aria-expanded]="item.node.expanded"
+                [attr.aria-label]="item.node.loading ? 'Cargando directorio' : item.node.expanded ? 'Contraer ' + item.node.name : 'Expandir ' + item.node.name"
+                (click)="toggleFolder(item.node)">
+                {{ item.node.loading ? '...' : item.node.expanded ? '−' : '+' }}
+              </button>
+            } @else {
+              <span class="tree-toggle-space" aria-hidden="true"></span>
+            }
+            <button
+              class="tree-name"
+              type="button"
+              [class.selected]="currentPath() === item.node.relativePath"
+              [attr.aria-current]="currentPath() === item.node.relativePath ? 'page' : null"
+              [disabled]="busy()"
+              (click)="openTreeFolder(item.node)">
+              {{ item.node.name }}
+            </button>
+          </div>
+        }
+      </nav>
+    } @else if (rootLoading()) {
+      <p role="status">Cargando arbol...</p>
+    } @else {
+      <p class="empty-state">El arbol FTP no esta disponible.</p>
+    }
+  </aside>
+
+  @if (directory(); as current) {
+    <section class="panel file-browser" aria-labelledby="files-heading">
+      <div class="browser-heading">
+        <div>
+          <h2 id="files-heading">Contenido de la carpeta</h2>
+          <p class="location-path">Ubicacion actual: <code>{{ current.path }}</code></p>
+        </div>
+        <span>
+          @if (searchTerm().trim()) {
+            {{ visibleEntries().length }} resultados
+          } @else {
+            {{ current.entries.length }} {{ current.entries.length === 1 ? 'elemento' : 'elementos' }}
+          }
+        </span>
+      </div>
+
+      <div class="file-search">
+        <label for="file-search">Buscar por nombre en esta carpeta</label>
+        <input
+          id="file-search"
+          type="search"
+          [value]="searchTerm()"
+          [disabled]="busy()"
+          (input)="setSearchTerm($event)"
+          placeholder="Ej.: index.html">
+        <small>No busca dentro de las subcarpetas.</small>
+      </div>
+
+      @if (current.entries.length === 0) {
+        <p class="empty-state">Esta carpeta esta vacia.</p>
+      } @else if (visibleEntries().length === 0) {
+        <p class="empty-state">No hay coincidencias en esta carpeta.</p>
+      } @else {
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Nombre</th>
+                <th scope="col">Tipo</th>
+                <th scope="col">Tamano</th>
+                <th scope="col">Modificado</th>
+                <th scope="col">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (entry of visibleEntries(); track entry.relative_path) {
+                <tr>
+                  <td class="file-name">
+                    @if (entry.type === 'directory') {
+                      <button class="name-link" type="button" (click)="openDirectory(entry)" [disabled]="busy()">
+                        {{ entry.name }}
+                      </button>
+                    } @else {
+                      <span>{{ entry.name }}</span>
+                    }
+                  </td>
+                  <td>{{ entry.type === 'directory' ? 'Carpeta' : entry.type === 'file' ? 'Archivo' : entry.type === 'link' ? 'Enlace' : 'Desconocido' }}</td>
+                  <td>{{ entry.type === 'file' ? formatSize(entry.size) : '—' }}</td>
+                  <td>{{ formatDate(entry.modified) }}</td>
+                  <td>
+                    <div class="actions file-actions">
+                      @if (entry.type === 'file') {
+                        <button type="button" (click)="download(entry)" [disabled]="busy()">
+                          {{ downloadingPath() === entry.relative_path ? 'Descargando...' : 'Descargar' }}
+                        </button>
+                        <button class="danger" type="button" (click)="confirmDelete(entry)" [disabled]="busy()">
+                          {{ deletingPath() === entry.relative_path ? 'Eliminando...' : 'Borrar' }}
+                        </button>
+                      } @else if (entry.type === 'directory') {
+                        <button type="button" (click)="openDirectory(entry)" [disabled]="busy()">Abrir</button>
+                      } @else {
+                        <span class="unavailable">Sin acciones</span>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+</div>

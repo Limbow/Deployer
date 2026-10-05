@@ -1,0 +1,121 @@
+<section class="panel">
+  <h2>3. Seleccionar archivos</h2>
+  <p>Lectura local, sin conexion FTP. Se comparan hashes con el historial exitoso de este proyecto, servidor y destino; no con el contenido remoto actual.</p>
+  @if (!enabled()) { <p>Completa el build o elige Omitir build / Continuar sin build para usar los archivos existentes.</p> }
+  @else if (!serverId()) { <p>Elige un servidor asociado en el paso 1 para calcular destinos y cambios. Si no hay ninguno, asocialo desde Proyectos.</p> }
+  <div class="actions">
+    <button class="primary" type="button" (click)="load()" [disabled]="!enabled() || !serverId() || loading() || deployActive() || deploySubmitting()">{{ loading() ? 'Analizando archivos...' : manifest() ? 'Volver a cargar archivos' : 'Cargar archivos' }}</button>
+  </div>
+  @if (error()) { <p class="alert error" role="alert">{{ error() }}</p> }
+  @if (loading()) { <p role="status">Recorriendo archivos y calculando hashes. No modifiques la carpeta durante el analisis.</p> }
+  @if (manifest(); as current) {
+    <dl>
+      <dt>Origen</dt><dd>{{ current.source_path }}</dd>
+      <dt>Destino</dt><dd>{{ current.destinations.backend }}</dd>
+      @if (current.destinations.public) { <dt>Contenido de public/</dt><dd>{{ current.destinations.public }}</dd> }
+      <dt>Publicables</dt><dd>{{ current.summary.files }} archivos · {{ formatBytes(current.summary.bytes) }}</dd>
+      <dt>Nuevos / cambiados</dt><dd>{{ current.summary.changed }}</dd>
+    </dl>
+    @if (current.destinations.public) {
+      <p class="warning">Public separado: antes de publicar Laravel habra que revisar las rutas de vendor/autoload.php y bootstrap/app.php en public/index.php. Esta herramienta no modifica ese archivo ni configura el hosting.</p>
+    }
+    @if (current.last_deploy_id === null) { <p class="warning">Sin deploy exitoso para este destino. Todos los archivos publicables se consideran nuevos.</p> }
+    @else { <p>Referencia: deploy exitoso #{{ current.last_deploy_id }}. Los archivos no incluidos en deploys parciales conservan su ultima referencia exitosa.</p> }
+    <div class="actions">
+      <button type="button" (click)="choose('changed')" [disabled]="deployActive() || deploySubmitting()">Solo cambiados</button>
+      <button type="button" (click)="choose('all')" [disabled]="deployActive() || deploySubmitting()">Todos los publicables</button>
+      <button type="button" (click)="choose('none')" [disabled]="deployActive() || deploySubmitting()">Ninguno</button>
+    </div>
+    <label class="check"><input type="checkbox" [ngModel]="showIgnored()" (ngModelChange)="showIgnored.set($event)"> Mostrar excluidos ({{ ignoredCount() }} entradas o carpetas)</label>
+    <small>Los excluidos no se pueden seleccionar ni se leen sus contenidos. Las carpetas excluidas no se recorren; su contador no incluye cada archivo interno. vendor de Laravel es publicable si no agregas una exclusion.</small>
+    @if (current.summary.files === 0) { <p>No hay archivos publicables. Revisa la carpeta de origen y las exclusiones.</p> }
+    <div class="tree" aria-label="Arbol de archivos publicables">
+      <app-file-tree [nodes]="tree()" [selected]="selected()" [disabled]="!enabled() || loading() || deployActive() || deploySubmitting()" (toggle)="toggle($event)" />
+    </div>
+    <p class="selection-summary" role="status">{{ selectedFiles().length }} archivos seleccionados · {{ formatBytes(selectedBytes()) }}</p>
+    @if (selectedFiles().length > 0) {
+      <details (toggle)="setReviewOpen($event)"><summary>Ver seleccion y destinos</summary>
+        @if (selectionExpanded()) {
+          <ul class="selection-list">
+            @for (file of selectedFiles(); track file.path) { <li>{{ file.path }} → {{ file.remote_path }}</li> }
+          </ul>
+        }
+      </details>
+    } @else { <p>No hay archivos seleccionados.</p> }
+    <p>La seleccion es temporal. Al cambiar proyecto, servidor, iniciar otro build o recargar archivos, se vuelve a calcular. El deploy verifica hashes y destinos antes de transferir.</p>
+  }
+</section>
+@if (manifest(); as current) {
+  <section class="panel deploy-panel">
+    <h2>4. Confirmar y publicar</h2>
+    <p>El deploy transfiere los archivos seleccionados por FTP/FTPS. Antes de reemplazar archivos remotos, guarda una copia local. No ejecuta comandos en el servidor.</p>
+    @if (current.obsolete_files.length > 0) {
+      <div class="obsolete-summary">
+        <p><strong>{{ current.obsolete_files.length }} archivos obsoletos identificados</strong>. Solo son rutas que Deploy Tool habia subido correctamente a este proyecto, servidor y destino, y que ya no existen en el origen local.</p>
+        <details>
+          <summary>Revisar archivos que podrian eliminarse</summary>
+          <ul class="selection-list">
+            @for (file of current.obsolete_files; track file.path) {
+              <li>{{ file.path }} → {{ file.remote_path }} ({{ formatBytes(file.size) }})</li>
+            }
+          </ul>
+        </details>
+        <label class="check">
+          <input id="deploy-delete-obsolete" type="checkbox" [ngModel]="deleteObsolete()" (ngModelChange)="setDeleteObsolete($event)" [disabled]="!enabled() || deployActive() || deploySubmitting() || !canCleanObsolete()">
+          Respaldar y eliminar estos archivos obsoletos despues de subir los cambios
+        </label>
+        @if (!allChangedSelected()) {
+          <p class="warning">Para habilitar la limpieza, selecciona todos los archivos nuevos o cambiados ({{ current.summary.changed }}). La opcion nunca elimina archivos desconocidos ni archivos que sigan presentes localmente.</p>
+        }
+      </div>
+    } @else {
+      <p>No hay archivos previamente subidos por esta herramienta que esten ausentes del origen local.</p>
+    }
+    @if (deployError()) { <p class="alert error" role="alert">{{ deployError() }}</p> }
+    <div class="deploy-form">
+      <label for="deploy-version">Version</label>
+      <input id="deploy-version" type="text" maxlength="255" autocomplete="off" required placeholder="Actual: {{ currentVersion() || 'sin version' }}" [ngModel]="version()" (ngModelChange)="setVersion($event)" [disabled]="!enabled() || deployLoading() || deployActive() || deploySubmitting()">
+      @if (!version()) { <small>Ingresa la version a publicar (por ejemplo, 1.4.2).</small> }
+      @if (version() && !isVersionValid()) { <small class="field-error">Usa letras, numeros, punto, guion o guion bajo; empieza con letra o numero.</small> }
+      <label for="deploy-changes">Cambios incluidos (opcional)</label>
+      <textarea id="deploy-changes" maxlength="10000" [ngModel]="changes()" (ngModelChange)="setChanges($event)" [disabled]="!enabled() || deployLoading() || deployActive() || deploySubmitting()"></textarea>
+      <small>El nombre del JSON de version se genera automaticamente y siempre es unico. No incluye credenciales.</small>
+    </div>
+    @if (selectedFiles().length === 0 && (!deleteObsolete() || current.obsolete_files.length === 0)) {
+      <p class="warning">Selecciona al menos un archivo para subir o habilita la limpieza de archivos obsoletos identificados.</p>
+    }
+    <label class="check deploy-confirm">
+      <input id="deploy-confirmation" type="checkbox" [ngModel]="confirmDeploy()" (ngModelChange)="confirmDeploy.set($event)" [disabled]="!enabled() || deployLoading() || deployActive() || deploySubmitting() || !isVersionValid() || (selectedFiles().length === 0 && (!deleteObsolete() || current.obsolete_files.length === 0))">
+      Confirmo desplegar la version {{ version() || '(sin version)' }} en {{ serverName() || 'el servidor seleccionado' }}, con {{ selectedFiles().length }} archivos para subir{{ deleteObsolete() ? ' y limpieza respaldada' : '' }}.
+    </label>
+    <div class="actions">
+      <button class="primary" type="button" (click)="startDeploy()" [disabled]="!canDeploy()">{{ deploySubmitting() ? 'Enviando deploy...' : 'Iniciar deploy' }}</button>
+    </div>
+    @if (deployLoading()) { <p role="status">Comprobando si hay un deploy en curso...</p> }
+    @if (deploy(); as currentDeploy) {
+      <section class="deploy-status" aria-live="polite">
+        <h3>Deploy #{{ currentDeploy.id }} · {{ statusLabel(currentDeploy.status) }}</h3>
+        <progress [value]="currentDeploy.progress" max="100" [attr.aria-label]="'Progreso del deploy: ' + currentDeploy.progress + '%'">{{ currentDeploy.progress }}%</progress>
+        <p>{{ currentDeploy.progress }}% · Version {{ currentDeploy.version }} · Servidor {{ currentDeploy.server_name || serverName() }}</p>
+        @if (currentDeploy.status === 'queued') {
+          <p class="warning">Esperando al worker. Inicia php artisan queue:work --timeout=3660 --tries=1 en backend si no comienza.</p>
+        }
+        @if (currentDeploy.version_file_name) { <p>Archivo de version remoto: {{ currentDeploy.remote_path }}/_deploys/{{ currentDeploy.version_file_name }}</p> }
+        @if (currentDeploy.duration_ms !== null) { <p>Duracion: {{ (currentDeploy.duration_ms / 1000).toFixed(1) }} s</p> }
+        @if (currentDeploy.status === 'success') { <p class="alert success">Deploy completado. Los archivos eliminados, ausentes y conservados quedan detallados en el archivo JSON de version.</p> }
+        @if (currentDeploy.status === 'failed') { <p class="alert error">El deploy fallo. Revisa el log antes de reintentar; los cambios transferidos antes del error no se revierten automaticamente.</p> }
+        <details>
+          <summary>Ver archivos y resultado</summary>
+          <ul class="deploy-files">
+            @for (file of currentDeploy.files; track file.id) {
+              <li><span>{{ file.relative_path }}</span><strong>{{ fileStatusLabel(file.status) }}</strong>@if (file.error) { <small>{{ file.error }}</small> }</li>
+            }
+          </ul>
+        </details>
+        <pre class="log deploy-log" tabindex="0" aria-label="Log del deploy">{{ currentDeploy.log || 'Sin salida todavia.' }}</pre>
+        @if (deployPollFailed()) { <button type="button" (click)="watch()">Reanudar seguimiento</button> }
+      </section>
+    }
+    <small>El seguimiento consulta estado, progreso y log cada 1,5 segundos. Si se cierra esta pantalla, se intenta recuperar el deploy activo al volver a cargar el arbol.</small>
+  </section>
+}

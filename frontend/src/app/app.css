@@ -1,0 +1,8 @@
+.topbar { background: #fff; border-bottom: 1px solid #dde2ec; display: flex; align-items: center; gap: 2rem; padding: 1rem max(1rem, calc((100vw - 1160px) / 2)); }
+.brand { font-size: 1.15rem; font-weight: 750; color: #17233b; text-decoration: none; white-space: nowrap; }
+.brand span { font-size: .65rem; color: #4f46e5; margin-left: .4rem; }
+nav a { text-decoration: none; color: #5c6679; font-size: .9rem; }
+nav a.active { color: #4f46e5; font-weight: 650; }
+nav { display: flex; flex-wrap: wrap; gap: 1rem; }
+.topbar { flex-wrap: wrap; }
+main { max-width: 1160px; padding: 2rem 1rem; margin: auto; }

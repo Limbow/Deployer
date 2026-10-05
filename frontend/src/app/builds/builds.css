@@ -1,0 +1,8 @@
+.steps { display: flex; flex-wrap: wrap; gap: 1rem; list-style: none; padding: 0; margin: 0 0 1.5rem; }
+.steps li { background: #e9edff; border-radius: 6px; padding: .7rem; }
+.steps .future { background: #eee; color: #666; }
+.build-panel { margin-top: 1.5rem; }
+.command, .log { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; border-radius: 6px; background: #17233b; color: #f3f6ff; }
+.log { max-height: 420px; overflow: auto; font-size: .85rem; }
+.path { overflow-wrap: anywhere; }
+h3 { margin-top: 1.5rem; }

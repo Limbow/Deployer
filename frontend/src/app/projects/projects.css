@@ -1,0 +1,10 @@
+.scan { margin-bottom: 1.5rem; }
+.type-filters { margin-bottom: 1rem; }
+.root, .server p { overflow-wrap: anywhere; }
+.connection { border: 1px solid #dde2ec; border-radius: 8px; padding: .75rem; margin: 1rem 0; }
+.connection button { margin-top: .75rem; }
+.connections-title { margin-top: 1.5rem; }
+.association { background: #f0f3fa; padding: .5rem; border-radius: 4px; font-size: .85rem; }
+.version-confirm { margin-top: 1rem; }
+.version-confirm label { display: block; margin: .75rem 0 .35rem; font-weight: 600; }
+.version-confirm select { width: 100%; max-width: 360px; box-sizing: border-box; border: 1px solid #aeb8ca; border-radius: 6px; padding: .6rem; font: inherit; }

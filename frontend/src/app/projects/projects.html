@@ -1,0 +1,179 @@
+<header class="heading">
+  <div>
+    <p class="eyebrow">ETAPA 2</p>
+    <h1>Proyectos</h1>
+    <p>Detecta proyectos Angular y Laravel y guarda sus opciones para futuros deploys.</p>
+  </div>
+  <div class="actions">
+    <button type="button" (click)="load()" [disabled]="busy()">Actualizar lista</button>
+    <button type="button" (click)="toggleHidden()" [disabled]="busy()" [attr.aria-pressed]="includeHidden()">{{ includeHidden() ? 'No mostrar ocultos' : 'Mostrar ocultos' }}</button>
+    <button class="primary" type="button" (click)="scan()" [disabled]="busy() || !ready()">{{ scanning() ? 'Buscando...' : 'Buscar proyectos' }}</button>
+  </div>
+</header>
+<div class="actions type-filters" role="group" aria-label="Filtrar proyectos por tipo">
+  <button type="button" (click)="typeFilter.set('laravel')" [class.primary]="typeFilter() === 'laravel'" [attr.aria-pressed]="typeFilter() === 'laravel'">Solo Laravel</button>
+  <button type="button" (click)="typeFilter.set('angular')" [class.primary]="typeFilter() === 'angular'" [attr.aria-pressed]="typeFilter() === 'angular'">Solo Angular</button>
+  <button type="button" (click)="typeFilter.set('all')" [class.primary]="typeFilter() === 'all'" [attr.aria-pressed]="typeFilter() === 'all'">Todo</button>
+</div>
+<p class="root">Carpeta de busqueda: <strong>{{ root() || 'Cargando...' }}</strong> · <a routerLink="/settings">Cambiar configuracion</a></p>
+@if (error()) { <p class="alert error" role="alert">{{ error() }}</p> }
+@if (notice()) { <p class="alert success" role="status">{{ notice() }}</p> }
+@if (loading()) { <p role="status">Cargando proyectos y servidores...</p> }
+
+@if (scanResult(); as result) {
+  <details class="panel scan" [open]="!formOpen()">
+    <summary>Resultado del escaneo ({{ filteredCandidates().length }} de {{ result.projects.length }} proyectos)</summary>
+    <p>Agregar a mis proyectos guarda la carpeta, las exclusiones y los destinos para no configurarlos en cada deploy. No copia ni sube archivos.</p>
+    @if (result.hidden_count) { <p>{{ result.hidden_count }} proyectos ocultos por filtros o manualmente.</p> }
+    @if (filteredCandidates().length === 0) { <p>No hay proyectos detectados que coincidan con el filtro y la visibilidad actuales.</p> }
+    <div class="server-list">
+      @for (candidate of filteredCandidates(); track candidate.local_path + candidate.angular_project) {
+        <article class="server">
+          <h3>{{ candidate.name }} <span class="badge">{{ candidate.type === 'laravel' ? 'Laravel' : 'Angular' }} · v{{ candidate.current_version }}</span></h3>
+          <p>{{ candidate.local_path }}</p>
+          <small>{{ candidate.builder }} · Salida: {{ candidate.build_output_path }}</small>
+          @if (candidate.registered_id !== null) {
+            <p>Carpeta ya agregada a mis proyectos. Editala en la lista de abajo.</p>
+          } @else {
+            <button type="button" (click)="configure(candidate)" [disabled]="busy() || !!candidate.hidden_reason">Configurar {{ candidate.name }}</button>
+          }
+          <p>{{ candidate.hidden_reason }}</p>
+          <button type="button" (click)="setVisibility(candidate.local_path, !candidate.hidden_reason)" [disabled]="busy()">{{ candidate.hidden_reason ? 'Volver a mostrar' : 'Ocultar proyecto' }}</button>
+        </article>
+      }
+    </div>
+    @if (result.issues.length > 0) {
+      <div class="alert warning" role="alert">
+        <h3>Problemas detectados</h3>
+        <ul>@for (issue of result.issues; track $index) { <li>{{ issue.local_path }}: {{ issue.message }}</li> }</ul>
+      </div>
+    }
+  </details>
+}
+
+<div [class.layout]="formOpen()">
+  @if (formOpen()) {
+    <section class="panel" aria-labelledby="project-form-title">
+      <h2 id="project-form-title">{{ editingId() === null ? 'Agregar a mis proyectos' : 'Editar proyecto' }}</h2>
+      <p>Se guardan opciones en esta PC. Los archivos locales no se modifican.</p>
+      <form [formGroup]="form" (ngSubmit)="save()">
+        <fieldset [disabled]="busy()">
+          <label for="project-name">Nombre</label>
+          <input #projectName id="project-name" formControlName="name" maxlength="255" required>
+          <label for="local-path">Carpeta local</label>
+          <input id="local-path" formControlName="local_path" maxlength="768" required spellcheck="false">
+          <p>Tipo: {{ form.controls.type.value === 'laravel' ? 'Laravel' : 'Angular' }}</p>
+          @if (form.controls.type.value === 'angular') {
+          <label for="angular-project">Aplicacion en angular.json</label>
+          <input id="angular-project" formControlName="angular_project" maxlength="255" required spellcheck="false">
+          <small>Se registra una aplicacion por carpeta. El build apunta explicitamente a esta aplicacion.</small>
+          }
+          <label for="output-path">Carpeta de archivos para subir</label>
+          <input id="output-path" formControlName="build_output_path" maxlength="2048" required [readonly]="form.controls.type.value === 'laravel'" spellcheck="false">
+          <small>{{ form.controls.type.value === 'laravel' ? 'Origen: raiz de Laravel. El destino del backend y el de public se configuran por servidor.' : 'Ya incluye browser cuando corresponde. Puede ser absoluta o relativa a la carpeta local.' }}</small>
+          <label for="build-command">Comando de build {{ form.controls.type.value === 'laravel' ? '(opcional)' : '' }}</label>
+          <input id="build-command" formControlName="build_command" maxlength="4096" [required]="form.controls.type.value === 'angular'" spellcheck="false">
+          <small>Se ejecutara dentro de la carpeta local en la etapa 3. Solo guarda comandos de confianza.</small>
+          <label for="version">Version registrada</label>
+          <input id="version" formControlName="current_version" [readonly]="form.controls.type.value === 'angular'">
+          <small>{{ form.controls.type.value === 'laravel' ? 'Version de composer.json o 0.0.0 si no declara una. Puedes registrar tu version sin editar composer.json.' : 'Leida de package.json al detectar.' }}</small>
+          <label for="ignore-patterns">Patrones a ignorar (uno por linea)</label>
+          <textarea id="ignore-patterns" formControlName="ignore_patterns_text" placeholder="*.map" spellcheck="false"></textarea>
+          @if (form.controls.type.value === 'laravel') {
+            <p class="warning">No publiques .env, datos de storage ni caches locales. Vendor no se excluye por defecto para instalaciones sin Composer en el hosting. La seleccion de archivos y la subida completa se implementaran en las etapas 4 y 5.</p>
+          }
+
+          <h3 class="connections-title">Servidores asociados</h3>
+          <small>{{ form.controls.type.value === 'laravel' ? 'Backend: carpeta fuera de public_html, por ejemplo /mi-api. Public separado: opcional, por ejemplo /public_html/api.' : 'Opcional. La ruta vacia usa la carpeta configurada en el servidor.' }}</small>
+          <div formArrayName="servers">
+            @for (connection of form.controls.servers.controls; track connection; let i = $index) {
+              <div class="connection" [formGroupName]="i">
+                <label [for]="'server-' + i">Servidor {{ i + 1 }}</label>
+                <select [id]="'server-' + i" formControlName="server_id">
+                  <option [ngValue]="0">Seleccionar servidor</option>
+                  @for (server of servers(); track server.id) { <option [ngValue]="server.id">{{ server.name }}</option> }
+                </select>
+                <label [for]="'label-' + i">Entorno</label>
+                <input [id]="'label-' + i" formControlName="label" required maxlength="255">
+                <label [for]="'remote-' + i">{{ form.controls.type.value === 'laravel' ? 'Ruta remota del backend (fuera de public_html)' : 'Ruta remota alternativa' }}</label>
+                <input [id]="'remote-' + i" formControlName="remote_path_override" maxlength="1024" [placeholder]="form.controls.type.value === 'laravel' ? '/nombre-api' : '/public_html'" [required]="form.controls.type.value === 'laravel'" spellcheck="false">
+                @if (form.controls.type.value === 'laravel') {
+                  <label [for]="'public-' + i">Destino separado del contenido de public (opcional)</label>
+                  <input [id]="'public-' + i" formControlName="public_remote_path" maxlength="1024" placeholder="/public_html/api" spellcheck="false">
+                  <small>Vacio: conservar public dentro del backend. Con destino: sus archivos se publicaran alli, sin el prefijo public/.</small>
+                }
+                <button type="button" (click)="removeServer(i)">Quitar asociacion</button>
+              </div>
+            }
+          </div>
+          <button type="button" (click)="addServer()" [disabled]="servers().length === 0">Asociar servidor</button>
+          @if (servers().length === 0) { <p><a routerLink="/servers">Crea un servidor para poder asociarlo.</a></p> }
+          <div class="actions">
+            <button class="primary" type="submit">{{ saving() ? 'Guardando...' : (editingId() === null ? 'Agregar a mis proyectos' : 'Guardar proyecto') }}</button>
+            <button type="button" (click)="cancel()">Cancelar</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+  }
+
+  <section class="panel" aria-labelledby="saved-title">
+    <h2 id="saved-title">Mis proyectos</h2>
+    @if (!loading() && filteredProjects().length === 0 && !error()) { <p>No hay proyectos guardados que coincidan con el filtro y la visibilidad actuales. Usa Buscar proyectos, cambia el filtro o activa Mostrar ocultos.</p> }
+    <div class="server-list">
+      @for (project of filteredProjects(); track project.id) {
+        <article class="server">
+          <div class="server-heading"><h3>{{ project.name }}</h3><span class="badge">{{ project.type === 'laravel' ? 'Laravel' : 'Angular' }} · v{{ project.current_version }}</span></div>
+          <p>{{ project.local_path }}</p>
+          <dl>
+            <dt>Aplicacion</dt><dd>{{ project.angular_project || 'Backend Laravel' }}</dd>
+            <dt>Salida</dt><dd>{{ project.build_output_path }}</dd>
+            <dt>Build</dt><dd>{{ project.build_command || 'Sin build (archivos fuente)' }}</dd>
+            <dt>Ignorar</dt><dd>{{ project.ignore_patterns.join(', ') || 'Ninguno' }}</dd>
+            <dt>Historial</dt><dd><a routerLink="/history" [queryParams]="{project: project.id}">Ver deploys</a></dd>
+          </dl>
+          @for (server of project.servers; track server.id) {
+            <p class="association">{{ server.name }} · {{ server.pivot.label }} · {{ server.pivot.remote_path_override || server.remote_path }}</p>
+            @if (server.pivot.public_remote_path) { <p>Public separado: {{ server.pivot.public_remote_path }}</p> }
+          }
+          <div class="actions">
+            <a routerLink="/builds" [queryParams]="{project: project.id}">Preparar deploy</a>
+            <button type="button" (click)="requestVersionBump(project)" [disabled]="busy() || formOpen()">Subir versión...</button>
+            <button type="button" (click)="edit(project)" [disabled]="busy()">Editar {{ project.name }}</button>
+            <button class="danger" type="button" (click)="requestDelete(project)" [disabled]="busy()">Eliminar {{ project.name }}</button>
+            <button type="button" (click)="setVisibility(project.local_path, !project.hidden_reason)" [disabled]="busy()">{{ project.hidden_reason ? 'Volver a mostrar' : 'Ocultar proyecto' }}</button>
+          </div>
+          @if (versionBumpCandidate()?.id === project.id) {
+            <div class="alert warning version-confirm" role="alert">
+              @if (project.type === 'angular') {
+                <p>Se actualizará package.json y npm podrá actualizar el archivo de bloqueo. No se ejecutarán scripts del proyecto ni se crearán tags de Git. Incrementa antes de compilar.</p>
+              } @else {
+                <p>Solo se actualizará la versión guardada en Deploy Tool. composer.json y los archivos locales no se modificarán.</p>
+              }
+              <label [for]="'version-bump-type-' + project.id">Tipo de incremento</label>
+              <select [id]="'version-bump-type-' + project.id" [value]="versionBumpType()" (change)="setVersionBumpType($event)">
+                <option value="patch">Patch (1.2.3 → 1.2.4)</option>
+                <option value="minor">Minor (1.2.3 → 1.3.0)</option>
+                <option value="major">Major (1.2.3 → 2.0.0)</option>
+              </select>
+              <div class="actions">
+                <button class="primary" type="button" (click)="confirmVersionBump()" [disabled]="busy()">Confirmar {{ versionBumpType() }}</button>
+                <button type="button" (click)="cancelVersionBump()" [disabled]="busy()">Cancelar</button>
+              </div>
+            </div>
+          }
+          @if (project.hidden_reason) { <p>{{ project.hidden_reason }}</p> }
+        </article>
+      }
+    </div>
+    @if (deleteCandidate(); as candidate) {
+      <div class="alert warning" role="alert">
+        <p>¿Eliminar el registro "{{ candidate.name }}"? No se borraran carpetas ni archivos locales.</p>
+        <div class="actions">
+          <button class="danger" type="button" (click)="remove()" [disabled]="busy()">Confirmar eliminacion</button>
+          <button type="button" (click)="deleteCandidate.set(null)" [disabled]="busy()">Cancelar eliminacion</button>
+        </div>
+      </div>
+    }
+  </section>
+</div>

@@ -1,0 +1,12 @@
+:host { display: block; }
+ul { list-style: none; padding: 0 0 0 .8rem; margin: .2rem 0; }
+li { padding: .25rem 0; }
+label, summary { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; overflow-wrap: anywhere; line-height: 1.6; }
+summary { cursor: pointer; }
+details > summary::before { content: '+'; width: 1rem; }
+details[open] > summary::before { content: '-'; }
+input { flex-shrink: 0; }
+.ignored { color: #687182; }
+.meta { font-size: .75rem; color: #657086; }
+.badge { border-radius: 4px; background: #edf2f7; color: #49556b; padding: .1rem .35rem; font-size: .7rem; }
+.changed { background: #fff1cc; color: #6d4b00; }

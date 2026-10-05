@@ -1,0 +1,35 @@
+<header class="heading">
+  <div>
+    <p class="eyebrow">CONFIGURACION LOCAL</p>
+    <h1>Configuracion</h1>
+    <p>Estos valores se guardan en la base de datos de esta PC.</p>
+  </div>
+  <button type="button" (click)="load()" [disabled]="loading() || saving()">Recargar</button>
+</header>
+@if (error()) { <p class="alert error" role="alert">{{ error() }}</p> }
+@if (notice()) { <p class="alert success" role="status">{{ notice() }}</p> }
+@if (loading()) { <p role="status">Cargando configuracion...</p> }
+<section class="panel">
+  <form [formGroup]="form" (ngSubmit)="save()">
+    <fieldset [disabled]="loading() || saving() || !ready()">
+      <label for="projects_root">Carpeta raiz de proyectos</label>
+      <input id="projects_root" formControlName="projects_root" maxlength="768" required spellcheck="false">
+      <small>Ruta absoluta existente. Se recorren subcarpetas, omitiendo dependencias, carpetas de build y enlaces.</small>
+      <label for="excluded-folders">Carpetas de proyectos a ocultar (un nombre por linea)</label>
+      <textarea id="excluded-folders" formControlName="excluded_folders_text" spellcheck="false"></textarea>
+      <small>Ejemplo: mobile, desktop, escritorio. Coinciden con nombres completos de carpetas en la ruta, no partes del nombre.</small>
+      <label class="check"><input type="checkbox" formControlName="hide_non_web_projects"> Ocultar Ionic/Capacitor/Cordova y Electron/Tauri por defecto</label>
+      <small>En Proyectos, Mostrar ocultos permite verlos y recuperarlos individualmente. No se borran archivos ni registros.</small>
+      <label for="npx_path">Ruta de npx</label>
+      <input id="npx_path" formControlName="npx_path" maxlength="1024" required spellcheck="false">
+      <small>En Windows: npx.cmd o su ruta completa. Se usara al implementar los builds (etapa 3).</small>
+      <label for="ftp_retries">Intentos FTP</label>
+      <input id="ftp_retries" type="number" formControlName="ftp_retries" min="1" max="10" step="1" required>
+      <label for="ftp_retry_delay_ms">Espera inicial entre intentos (milisegundos)</label>
+      <input id="ftp_retry_delay_ms" type="number" formControlName="ftp_retry_delay_ms" min="0" max="60000" step="1" required>
+      <small>Los reintentos se usaran al implementar las subidas (etapa 5), no en la prueba de conexion actual.</small>
+      <div class="actions"><button class="primary" type="submit">{{ saving() ? 'Guardando...' : 'Guardar configuracion' }}</button></div>
+    </fieldset>
+  </form>
+  <p><a routerLink="/projects">Ir a proyectos para volver a escanear</a></p>
+</section>
