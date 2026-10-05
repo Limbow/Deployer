@@ -11,6 +11,7 @@
 /backend/storage/logs/*.log
 /backend/bootstrap/cache/*.php
 /backend/.phpunit.cache/
+/backend/database/database.sqlite
 /frontend/node_modules/
 /frontend/dist/
 /frontend/.angular/
