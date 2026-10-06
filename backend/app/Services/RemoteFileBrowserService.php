@@ -69,6 +69,18 @@ class RemoteFileBrowserService
         return ['path' => $path];
     }
 
+    public function verifyFile(Server $server, string $relativePath): void
+    {
+        $relativePath = $this->normalizeRelativePath($relativePath);
+        $this->connection->open($server, $this->client);
+        try {
+            $this->changeToRoot();
+            $this->assertFile($relativePath);
+        } finally {
+            $this->close();
+        }
+    }
+
     public function downloadFile(Server $server, string $relativePath): BinaryFileResponse
     {
         $relativePath = $this->normalizeRelativePath($relativePath);

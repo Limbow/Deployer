@@ -7,6 +7,7 @@ use App\Models\Build;
 use App\Models\Deploy;
 use App\Models\Project;
 use App\Models\Server;
+use App\Services\RemoteFileBrowserService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
@@ -130,6 +131,108 @@ class DeployApiTest extends TestCase
             ->assertJsonPath('data.files.0.status', 'pending_delete');
         $this->postJson('/api/deploys', $this->payload(['files' => []]))
             ->assertUnprocessable()->assertJsonValidationErrors('files');
+    }
+
+    private function remoteListing(array $entries): array
+    {
+        return ['entries' => array_map(fn (array $entry) => [
+            'name' => $entry[0], 'relative_path' => 'public_html/site/'.$entry[0],
+            'type' => $entry[1], 'size' => 9, 'modified' => null,
+        ], $entries)];
+    }
+
+    public function test_lists_real_destination_files_and_protects_replacements_links_and_metadata(): void
+    {
+        $this->mock(RemoteFileBrowserService::class, function ($mock): void {
+            $mock->shouldReceive('browse')->once()->withArgs(
+                fn ($server, $path) => $server->id === $this->server->id && $path === 'public_html/site',
+            )->andReturn($this->remoteListing([
+                ['old.js', 'file'], ['index.html', 'file'], ['linked.js', 'link'], ['.env', 'file'], ['_deploys', 'directory'],
+            ]));
+        });
+        $this->getJson('/api/projects/'.$this->project->id.'/remote-files?server_id='.$this->server->id)
+            ->assertOk()->assertJsonPath('data.remote_path', '/public_html/site')
+            ->assertJsonPath('data.entries.0.publish_path', 'old.js')
+            ->assertJsonPath('data.entries.0.deletion_reason', null)
+            ->assertJsonPath('data.entries.1.deletion_reason', 'Existe en el origen actual; se reemplaza al subirlo, no se borra.')
+            ->assertJsonPath('data.entries.2.deletion_reason', 'Solo se pueden borrar archivos, no carpetas ni enlaces.')
+            ->assertJsonPath('data.entries.3.deletion_reason', 'Protegido: variables de entorno.');
+    }
+
+    public function test_records_only_explicitly_selected_remote_files_even_without_upload_history(): void
+    {
+        $this->mock(RemoteFileBrowserService::class, function ($mock): void {
+            $mock->shouldReceive('browse')->once()->andReturn($this->remoteListing([
+                ['old.js', 'file'], ['keep.js', 'file'],
+            ]));
+        });
+        $response = $this->postJson('/api/deploys', $this->payload(['files' => [], 'delete_files' => ['old.js']]))
+            ->assertStatus(202)->assertJsonPath('data.delete_obsolete', true)->assertJsonCount(1, 'data.files')
+            ->assertJsonPath('data.files.0.relative_path', 'old.js')
+            ->assertJsonPath('data.files.0.manual_delete', true)
+            ->assertJsonPath('data.files.0.status', 'pending_delete');
+        $this->assertDatabaseMissing('deploy_files', ['deploy_id' => $response->json('data.id'), 'relative_path' => 'keep.js']);
+    }
+
+    public function test_remote_destination_accepts_empty_or_omitted_root_path(): void
+    {
+        $this->mock(RemoteFileBrowserService::class, function ($mock): void {
+            $mock->shouldReceive('browse')->times(2)->withArgs(
+                fn ($server, $path) => $server->id === $this->server->id && $path === 'public_html/site',
+            )->andReturn($this->remoteListing([['old.js', 'file']]));
+        });
+        foreach (['', '&path='] as $query) {
+            $this->getJson('/api/projects/'.$this->project->id.'/remote-files?server_id='.$this->server->id.'&destination=backend'.$query)
+                ->assertOk()->assertJsonPath('data.path', '')
+                ->assertJsonPath('data.entries.0.publish_path', 'old.js');
+        }
+    }
+
+    public function test_rejects_invalid_protected_or_current_source_deletions_without_connecting(): void
+    {
+        $this->mock(RemoteFileBrowserService::class, fn ($mock) => $mock->shouldNotReceive('browse'));
+        foreach (['../other.js', '/other.js', 'assets//old.js', '.env', '_deploys/version.json', 'index.html', 'main-new.js'] as $path) {
+            $this->postJson('/api/deploys', $this->payload(['delete_files' => [$path]]))
+                ->assertUnprocessable()->assertJsonValidationErrors('delete_files');
+        }
+        $this->assertDatabaseCount('deploys', 0);
+    }
+
+    public function test_rejects_remote_directories_links_and_missing_files(): void
+    {
+        $this->mock(RemoteFileBrowserService::class, function ($mock): void {
+            $mock->shouldReceive('browse')->times(3)->andReturn($this->remoteListing([
+                ['folder', 'directory'], ['link.js', 'link'],
+            ]));
+        });
+        foreach (['folder', 'link.js', 'missing.js'] as $path) {
+            $this->postJson('/api/deploys', $this->payload(['delete_files' => [$path]]))
+                ->assertUnprocessable()->assertJsonValidationErrors('delete_files');
+        }
+        $this->assertDatabaseCount('deploys', 0);
+    }
+
+    public function test_rejects_combining_automatic_and_manual_cleanup(): void
+    {
+        $this->postJson('/api/deploys', $this->payload(['delete_obsolete' => true, 'delete_files' => ['old.js']]))
+            ->assertUnprocessable()->assertJsonValidationErrors('delete_files');
+    }
+
+    public function test_remote_browser_is_scoped_to_the_separate_public_destination(): void
+    {
+        $this->project->update(['type' => 'laravel', 'build_output_path' => $this->directory]);
+        $this->project->servers()->updateExistingPivot($this->server->id, [
+            'remote_path_override' => '/site-backend', 'public_remote_path' => '/public_html/api',
+        ]);
+        $this->mock(RemoteFileBrowserService::class, function ($mock): void {
+            $mock->shouldReceive('browse')->once()->withArgs(fn ($server, $path) => $path === 'public_html/api/assets')
+                ->andReturn($this->remoteListing([['old.js', 'file']]));
+        });
+        $this->getJson('/api/projects/'.$this->project->id.'/remote-files?server_id='.$this->server->id.'&destination=public&path=assets')
+            ->assertOk()->assertJsonPath('data.entries.0.publish_path', 'public/assets/old.js')
+            ->assertJsonPath('data.remote_path', '/public_html/api/assets')->assertJsonPath('data.parent_path', '');
+        $this->getJson('/api/projects/'.$this->project->id.'/remote-files?server_id='.$this->server->id.'&path=../')
+            ->assertUnprocessable();
     }
 
     public function test_active_deploy_can_be_recovered_only_for_an_associated_server(): void

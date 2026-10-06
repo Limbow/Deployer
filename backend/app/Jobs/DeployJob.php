@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Exceptions\DeployException;
+use App\Exceptions\FtpConnectionException;
 use App\Exceptions\FtpTransferException;
 use App\Models\Deploy;
 use App\Models\DeployFile;
@@ -11,11 +12,14 @@ use App\Models\Server;
 use App\Services\FtpTransferService;
 use App\Services\LocalPath;
 use App\Services\PublishPath;
+use App\Services\RemoteFileBrowserService;
 use App\Services\VersionFileService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
 
 class DeployJob implements ShouldQueue
@@ -30,7 +34,7 @@ class DeployJob implements ShouldQueue
 
     public function __construct(public int $deployId) {}
 
-    public function handle(FtpTransferService $ftp, VersionFileService $versions, PublishPath $paths): void
+    public function handle(FtpTransferService $ftp, VersionFileService $versions, PublishPath $paths, ?RemoteFileBrowserService $browser = null): void
     {
         if (! Deploy::whereKey($this->deployId)->where('status', 'queued')->update([
             'status' => 'running', 'started_at' => now(), 'progress' => 1,
@@ -78,7 +82,7 @@ class DeployJob implements ShouldQueue
             }
             if ($deploy->delete_obsolete) {
                 foreach ($deletions as $file) {
-                    $this->deleteObsolete($deploy, $server, $file, $source, $destinations, $paths, $ftp, $append);
+                    $this->deleteObsolete($deploy, $server, $file, $source, $destinations, $paths, $ftp, $append, $browser);
                     $completed++;
                     $this->progress($deploy, $completed, $total);
                 }
@@ -96,7 +100,7 @@ class DeployJob implements ShouldQueue
             }
             $append("Deploy completado correctamente.\n");
         } catch (Throwable $exception) {
-            $message = $exception instanceof DeployException || $exception instanceof FtpTransferException
+            $message = $exception instanceof DeployException || $exception instanceof FtpTransferException || $exception instanceof FtpConnectionException
                 ? $exception->getMessage()
                 : 'El deploy fallo por un error local inesperado. Revisa permisos, almacenamiento y conexion FTP.';
             $deploy->files()->whereIn('status', ['uploading', 'deleting'])->update([
@@ -168,7 +172,7 @@ class DeployJob implements ShouldQueue
         }
     }
 
-    private function deleteObsolete(Deploy $deploy, Server $server, DeployFile $file, string $source, array $destinations, PublishPath $paths, FtpTransferService $ftp, callable $append): void
+    private function deleteObsolete(Deploy $deploy, Server $server, DeployFile $file, string $source, array $destinations, PublishPath $paths, FtpTransferService $ftp, callable $append, ?RemoteFileBrowserService $browser): void
     {
         try {
             if ($paths->file($file->relative_path, $destinations) !== $file->remote_path) {
@@ -189,6 +193,13 @@ class DeployJob implements ShouldQueue
 
                 return;
             }
+            if ($file->manual_delete) {
+                try {
+                    ($browser ?? app(RemoteFileBrowserService::class))->verifyFile($server, ltrim($file->remote_path, '/'));
+                } catch (ValidationException|NotFoundHttpException $exception) {
+                    throw new DeployException('No se pudo verificar un archivo regular dentro del destino: '.$file->remote_path.'. '.$exception->getMessage(), previous: $exception);
+                }
+            }
             $backup = $this->backupPath($deploy, $file->relative_path, true);
             $ftp->download($server, $file->remote_path, $backup['absolute']);
             $remoteHash = hash_file('sha1', $backup['absolute']);
@@ -196,7 +207,13 @@ class DeployJob implements ShouldQueue
                 throw new DeployException('No se pudo verificar el respaldo de '.$file->remote_path.'.');
             }
             $file->update(['backup_path' => $backup['relative']]);
-            if (! hash_equals($file->hash, $remoteHash)) {
+            if ($file->manual_delete) {
+                $remoteSize = filesize($backup['absolute']);
+                if ($remoteSize === false) {
+                    throw new DeployException('No se pudo verificar el tamano del respaldo de '.$file->remote_path.'.');
+                }
+                $file->update(['hash' => $remoteHash, 'size' => $remoteSize]);
+            } elseif (! hash_equals($file->hash, $remoteHash)) {
                 $file->update(['status' => 'skipped', 'error' => 'El archivo remoto fue modificado externamente; se respaldo y se conservo.']);
                 $append('Se conserva '.$file->remote_path.' porque el contenido remoto difiere del ultimo upload registrado.'."\n");
 
@@ -217,7 +234,7 @@ class DeployJob implements ShouldQueue
 
     private function failureReason(Throwable $exception): string
     {
-        return $exception instanceof DeployException || $exception instanceof FtpTransferException
+        return $exception instanceof DeployException || $exception instanceof FtpTransferException || $exception instanceof FtpConnectionException
             ? $exception->getMessage()
             : 'La transferencia fallo por un error local inesperado.';
     }

@@ -31,6 +31,7 @@ Route::get('projects/{project}/builds/latest', [BuildController::class, 'latest'
 Route::get('projects/{project}/deploys/active', [DeployController::class, 'active']);
 Route::get('builds/{build}', [BuildController::class, 'show']);
 Route::get('projects/{project}/files', [ProjectFilesController::class, 'index']);
+Route::get('projects/{project}/remote-files', [ProjectFilesController::class, 'remote']);
 Route::get('deploys', [DeployController::class, 'index']);
 Route::post('deploys', [DeployController::class, 'store']);
 Route::get('deploys/{deploy}', [DeployController::class, 'show']);

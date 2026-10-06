@@ -21,6 +21,8 @@ class DeployRequest extends FormRequest
             'version' => ['required', 'string', 'max:255', 'regex:/\A[A-Za-z0-9][A-Za-z0-9.+_-]{0,254}\z/'],
             'changes' => ['nullable', 'string', 'max:10000'],
             'delete_obsolete' => ['sometimes', 'boolean'],
+            'delete_files' => ['sometimes', 'array', 'max:1000'],
+            'delete_files.*' => ['required', 'string', 'max:1024', 'distinct', 'not_regex:/[\x00-\x1F\x7F\\\\]/'],
             'files' => ['present', 'array', 'max:50000'],
             'files.*' => ['required', 'string', 'max:2048', 'distinct', 'not_regex:/[\x00-\x1F\x7F\\\\]/'],
         ];

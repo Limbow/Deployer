@@ -1,6 +1,19 @@
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
-import { ApiResponse } from '../servers/server-api';
+import { ApiResponse, RemoteFileEntry } from '../servers/server-api';
+
+export interface DeployRemoteEntry extends RemoteFileEntry {
+  publish_path: string;
+  deletion_reason: string | null;
+}
+
+export interface DeployRemoteDirectory {
+  destination: 'backend' | 'public';
+  path: string;
+  remote_path: string;
+  parent_path: string | null;
+  entries: DeployRemoteEntry[];
+}
 
 export interface PublishFile {
   path: string;
@@ -56,5 +69,11 @@ export class FileApi {
 
   list(projectId: number, serverId: number) {
     return this.http.get<ApiResponse<FileManifest>>(`/api/projects/${projectId}/files`, { params: { server_id: serverId } });
+  }
+
+  remote(projectId: number, serverId: number, destination: 'backend' | 'public', path: string) {
+    return this.http.get<ApiResponse<DeployRemoteDirectory>>(`/api/projects/${projectId}/remote-files`, {
+      params: { server_id: serverId, destination, ...(path ? { path } : {}) },
+    });
   }
 }

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\FtpConnectionException;
 use App\Exceptions\FtpTransferException;
 use App\Jobs\DeployJob;
 use App\Models\Deploy;
@@ -9,6 +10,7 @@ use App\Models\Project;
 use App\Models\Server;
 use App\Services\FtpTransferService;
 use App\Services\PublishPath;
+use App\Services\RemoteFileBrowserService;
 use App\Services\VersionFileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
@@ -170,6 +172,83 @@ class DeployJobTest extends TestCase
         (new DeployJob($deploy->id))->handle($ftp, new VersionFileService($ftp), new PublishPath);
         $this->assertSame('success', $deploy->fresh()->status, $deploy->fresh()->log);
         $this->assertSame('skipped', $deploy->files()->where('relative_path', 'old-chunk.js')->value('status'));
+    }
+
+    public function test_manual_deletion_verifies_remote_type_and_backs_up_unknown_files_before_deleting(): void
+    {
+        $deploy = $this->deployment(['old.js' => 'pending_delete'], cleanup: true);
+        $deploy->files()->update(['manual_delete' => true, 'hash' => '']);
+        $ftp = Mockery::mock(FtpTransferService::class);
+        $browser = Mockery::mock(RemoteFileBrowserService::class);
+        $browser->shouldReceive('verifyFile')->once()->with(Mockery::type(Server::class), 'public_html/site/old.js');
+        $ftp->shouldReceive('fileExists')->once()->andReturn(true);
+        $ftp->shouldReceive('download')->once()->andReturnUsing(fn ($server, $remote, $local) => File::put($local, 'unknown old bundle'));
+        $ftp->shouldReceive('delete')->once()->andReturnUsing(function () use ($deploy): bool {
+            $file = $deploy->files()->first();
+            $this->assertSame('unknown old bundle', File::get(storage_path('app/'.$file->backup_path)));
+            $this->assertSame(sha1('unknown old bundle'), $file->hash);
+
+            return true;
+        });
+        $ftp->shouldReceive('ensureDirectory')->once();
+        $ftp->shouldReceive('fileExists')->twice()->andReturn(true, false);
+        $ftp->shouldReceive('upload')->once();
+        $ftp->shouldReceive('disconnect')->once();
+        (new DeployJob($deploy->id))->handle($ftp, new VersionFileService($ftp), new PublishPath, $browser);
+        $this->assertSame('success', $deploy->fresh()->status, $deploy->fresh()->log);
+        $this->assertSame('deleted', $deploy->files()->first()->status);
+    }
+
+    public function test_manual_deletion_never_deletes_when_backup_fails(): void
+    {
+        $deploy = $this->deployment(['old.js' => 'pending_delete'], cleanup: true);
+        $deploy->files()->update(['manual_delete' => true, 'hash' => '']);
+        $ftp = Mockery::mock(FtpTransferService::class);
+        $browser = Mockery::mock(RemoteFileBrowserService::class);
+        $browser->shouldReceive('verifyFile')->once();
+        $ftp->shouldReceive('fileExists')->once()->andReturn(true);
+        $ftp->shouldReceive('download')->once()->andThrow(new FtpTransferException('No se pudo descargar el respaldo.'));
+        $ftp->shouldNotReceive('delete');
+        $ftp->shouldNotReceive('upload');
+        $ftp->shouldReceive('disconnect')->once();
+        (new DeployJob($deploy->id))->handle($ftp, new VersionFileService($ftp), new PublishPath, $browser);
+        $this->assertSame('failed', $deploy->fresh()->status);
+        $this->assertSame('failed', $deploy->files()->first()->status);
+    }
+
+    public function test_manual_deletion_rejects_a_remote_path_that_changed_into_a_link(): void
+    {
+        $deploy = $this->deployment(['old.js' => 'pending_delete'], cleanup: true);
+        $deploy->files()->update(['manual_delete' => true, 'hash' => '']);
+        $ftp = Mockery::mock(FtpTransferService::class);
+        $browser = Mockery::mock(RemoteFileBrowserService::class);
+        $browser->shouldReceive('verifyFile')->once()->andThrow(
+            new FtpConnectionException('La ruta remota ya no es un archivo regular.'),
+        );
+        $ftp->shouldReceive('fileExists')->once()->andReturn(true);
+        $ftp->shouldNotReceive('download');
+        $ftp->shouldNotReceive('delete');
+        $ftp->shouldReceive('disconnect')->once();
+        (new DeployJob($deploy->id))->handle($ftp, new VersionFileService($ftp), new PublishPath, $browser);
+        $this->assertSame('failed', $deploy->fresh()->status);
+        $this->assertStringContainsString('ya no es un archivo regular', $deploy->fresh()->log);
+    }
+
+    public function test_manual_deletion_preserves_a_file_that_reappears_in_the_build(): void
+    {
+        $deploy = $this->deployment(['old.js' => 'pending_delete'], cleanup: true);
+        $deploy->files()->update(['manual_delete' => true, 'hash' => '']);
+        File::put($this->source.DIRECTORY_SEPARATOR.'old.js', 'new version');
+        $ftp = Mockery::mock(FtpTransferService::class);
+        $ftp->shouldNotReceive('download');
+        $ftp->shouldNotReceive('delete');
+        $ftp->shouldReceive('ensureDirectory')->once();
+        $ftp->shouldReceive('fileExists')->twice()->andReturn(true, false);
+        $ftp->shouldReceive('upload')->once();
+        $ftp->shouldReceive('disconnect')->once();
+        (new DeployJob($deploy->id))->handle($ftp, new VersionFileService($ftp), new PublishPath);
+        $this->assertSame('success', $deploy->fresh()->status, $deploy->fresh()->log);
+        $this->assertSame('skipped', $deploy->files()->first()->status);
     }
 
     public function test_a_failed_upload_marks_the_deploy_failed_and_never_uploads_a_version_record(): void

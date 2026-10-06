@@ -49,6 +49,48 @@
   <section class="panel deploy-panel">
     <h2>4. Confirmar y publicar</h2>
     <p>El deploy transfiere los archivos seleccionados por FTP/FTPS. Antes de reemplazar archivos remotos, guarda una copia local. No ejecuta comandos en el servidor.</p>
+    <h3>Seleccionar archivos a borrar del destino</h3>
+    <p>Consulta la carpeta real por FTP y marca solo los archivos anteriores que quieras borrar, incluidos los subidos fuera de esta herramienta. Se respaldan y eliminan despues de subir los archivos seleccionados. Los archivos presentes en el origen actual, como index.html o main.js si conserva su nombre, se reemplazan al subirlos y no se pueden marcar para borrar.</p>
+    <div class="actions">
+      <button type="button" (click)="loadRemote()" [disabled]="remoteLoading() || deployActive() || deploySubmitting()">Ver archivos del destino</button>
+      @if (current.destinations.public) {
+        <button type="button" (click)="loadRemote('public')" [disabled]="remoteLoading() || deployActive() || deploySubmitting()">Ver destino public</button>
+      }
+    </div>
+    @if (remoteLoading()) { <p role="status">Consultando archivos remotos...</p> }
+    @if (remoteError()) { <p class="alert error" role="alert">{{ remoteError() }}</p> }
+    @if (remoteDirectory(); as directory) {
+      <p><strong>Carpeta remota:</strong> {{ directory.remote_path }}</p>
+      <div class="actions">
+        @if (directory.parent_path !== null) {
+          <button type="button" (click)="loadRemote(directory.destination, directory.parent_path)" [disabled]="remoteLoading() || deployActive() || deploySubmitting()">Carpeta superior</button>
+        }
+        <button type="button" (click)="loadRemote(directory.destination, directory.path)" [disabled]="remoteLoading() || deployActive() || deploySubmitting()">Actualizar listado remoto</button>
+      </div>
+      <ul class="selection-list" aria-label="Archivos remotos para borrar">
+        @for (entry of directory.entries; track entry.publish_path) {
+          <li>
+            @if (entry.type === 'directory') {
+              <button type="button" (click)="loadRemote(directory.destination, directory.path ? directory.path + '/' + entry.name : entry.name)" [disabled]="remoteLoading() || deployActive() || deploySubmitting()">{{ entry.name }}/</button>
+            } @else {
+              <label class="check">
+                <input type="checkbox" [attr.aria-label]="'Borrar ' + entry.name" [ngModel]="deleteFiles().has(entry.publish_path)" (ngModelChange)="toggleRemote(entry, $event)" [disabled]="entry.deletion_reason !== null || remoteLoading() || deployActive() || deploySubmitting()">
+                {{ entry.name }} @if (entry.size !== null) { ({{ formatBytes(entry.size) }}) }
+              </label>
+              @if (entry.deletion_reason) { <small>{{ entry.deletion_reason }}</small> }
+            }
+          </li>
+        } @empty { <li>La carpeta remota esta vacia.</li> }
+      </ul>
+    }
+    @if (deleteFiles().size > 0) {
+      <p class="warning">{{ deleteFiles().size }} archivos seleccionados para respaldar y borrar. Revisa las rutas antes de confirmar.</p>
+      <ul class="selection-list" aria-label="Seleccion de borrado">
+        @for (file of deletionSelection(); track file.path) {
+          <li>{{ file.remote }} <button type="button" (click)="removeDeletion(file.path)" [disabled]="deployActive() || deploySubmitting()">Quitar</button></li>
+        }
+      </ul>
+    }
     @if (current.obsolete_files.length > 0) {
       <div class="obsolete-summary">
         <p><strong>{{ current.obsolete_files.length }} archivos obsoletos identificados</strong>. Solo son rutas que Deploy Tool habia subido correctamente a este proyecto, servidor y destino, y que ya no existen en el origen local.</p>
@@ -61,11 +103,11 @@
           </ul>
         </details>
         <label class="check">
-          <input id="deploy-delete-obsolete" type="checkbox" [ngModel]="deleteObsolete()" (ngModelChange)="setDeleteObsolete($event)" [disabled]="!enabled() || deployActive() || deploySubmitting() || !canCleanObsolete()">
-          Respaldar y eliminar estos archivos obsoletos despues de subir los cambios
+          <input id="deploy-delete-obsolete" type="checkbox" [ngModel]="deleteObsolete()" (ngModelChange)="setDeleteObsolete($event)" [disabled]="!enabled() || deployActive() || deploySubmitting() || remoteLoading()">
+          Alternativa: respaldar y eliminar todos estos obsoletos identificados (selecciona automaticamente todos los nuevos/cambiados para subir)
         </label>
         @if (!allChangedSelected()) {
-          <p class="warning">Para habilitar la limpieza, selecciona todos los archivos nuevos o cambiados ({{ current.summary.changed }}). La opcion nunca elimina archivos desconocidos ni archivos que sigan presentes localmente.</p>
+          <p class="warning">Para publicar con la limpieza automatica, selecciona todos los archivos nuevos o cambiados ({{ current.summary.changed }}). Esta alternativa nunca elimina archivos desconocidos ni archivos que sigan presentes localmente.</p>
         }
       </div>
     } @else {
@@ -81,12 +123,12 @@
       <textarea id="deploy-changes" maxlength="10000" [ngModel]="changes()" (ngModelChange)="setChanges($event)" [disabled]="!enabled() || deployLoading() || deployActive() || deploySubmitting()"></textarea>
       <small>El nombre del JSON de version se genera automaticamente y siempre es unico. No incluye credenciales.</small>
     </div>
-    @if (selectedFiles().length === 0 && (!deleteObsolete() || current.obsolete_files.length === 0)) {
+    @if (selectedFiles().length === 0 && deleteFiles().size === 0 && (!deleteObsolete() || current.obsolete_files.length === 0)) {
       <p class="warning">Selecciona al menos un archivo para subir o habilita la limpieza de archivos obsoletos identificados.</p>
     }
     <label class="check deploy-confirm">
-      <input id="deploy-confirmation" type="checkbox" [ngModel]="confirmDeploy()" (ngModelChange)="confirmDeploy.set($event)" [disabled]="!enabled() || deployLoading() || deployActive() || deploySubmitting() || !isVersionValid() || (selectedFiles().length === 0 && (!deleteObsolete() || current.obsolete_files.length === 0))">
-      Confirmo desplegar la version {{ version() || '(sin version)' }} en {{ serverName() || 'el servidor seleccionado' }}, con {{ selectedFiles().length }} archivos para subir{{ deleteObsolete() ? ' y limpieza respaldada' : '' }}.
+      <input id="deploy-confirmation" type="checkbox" [ngModel]="confirmDeploy()" (ngModelChange)="confirmDeploy.set($event)" [disabled]="!enabled() || deployLoading() || deployActive() || deploySubmitting() || remoteLoading() || !isVersionValid() || (selectedFiles().length === 0 && deleteFiles().size === 0 && (!deleteObsolete() || current.obsolete_files.length === 0))">
+      Confirmo desplegar la version {{ version() || '(sin version)' }} en {{ serverName() || 'el servidor seleccionado' }}, con {{ selectedFiles().length }} archivos para subir{{ deleteObsolete() ? ' y limpieza respaldada' : '' }} y {{ deleteFiles().size }} archivos elegidos para respaldar y borrar.
     </label>
     <div class="actions">
       <button class="primary" type="button" (click)="startDeploy()" [disabled]="!canDeploy()">{{ deploySubmitting() ? 'Enviando deploy...' : 'Iniciar deploy' }}</button>

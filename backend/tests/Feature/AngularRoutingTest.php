@@ -36,11 +36,24 @@ class AngularRoutingTest extends TestCase
         $html = '<!doctype html><html><head><base href="/app/"></head><body>Deploy Tool</body></html>';
         file_put_contents(public_path('app/index.html'), $html);
 
-        foreach (['/app', '/app/', '/app/projects/123'] as $uri) {
+        foreach (['/app', '/app/', '/app/projects/123', '/app/server-files/2'] as $uri) {
             $response = $this->get($uri);
 
             $response->assertOk();
+            $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
             $this->assertSame($html, $response->baseResponse->getFile()->getContent());
+        }
+
+    }
+
+    public function test_missing_assets_never_return_the_angular_index(): void
+    {
+        file_put_contents(public_path('app/index.html'), '<html>Angular index must not be returned</html>');
+        foreach (['/app/chunk-OLD.js', '/app/main-OLD.js', '/app/styles-OLD.css', '/app/assets/old.svg'] as $uri) {
+            $this->get($uri)->assertNotFound()
+                ->assertHeader('Content-Type', 'text/plain; charset=UTF-8')
+                ->assertSee('Recarga la pagina')
+                ->assertDontSee('Angular index must not be returned');
         }
     }
 

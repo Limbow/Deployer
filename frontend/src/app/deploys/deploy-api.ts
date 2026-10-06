@@ -79,6 +79,7 @@ export interface DeployInput {
   changes: string;
   delete_obsolete: boolean;
   files: string[];
+  delete_files?: string[];
 }
 
 @Injectable({ providedIn: 'root' })

@@ -74,6 +74,11 @@ En [angular.json](frontend/angular.json), el build de produccion usa:
 Angular limpia la carpeta de salida y podria borrar el `index.php` de Laravel.
 `/` redirige a `/app/`, y las rutas internas `/app/...` sirven el mismo HTML.
 Los archivos estaticos los sirve directamente `php artisan serve`.
+El HTML de las rutas Angular se envia sin cache. Los recursos estaticos faltantes
+(por ejemplo un chunk de una compilacion anterior) devuelven 404, nunca el HTML
+de la aplicacion. Despues de recompilar, recarga las pestanas abiertas con
+Ctrl+F5 antes de seguir navegando: una pestana abierta puede conservar referencias
+a los chunks del build anterior.
 Si falta el build, Laravel devuelve HTTP 503 con un mensaje explicito.
 El router [server.php](backend/server.php), que `artisan serve` detecta
 automaticamente, normaliza el script de entrada antes de usar el router de
@@ -297,9 +302,28 @@ activo. Un estado **En cola** espera a `php artisan queue:work --timeout=3660 --
   ni archivos que sigan presentes localmente. Antes de borrar, descarga el archivo
   y compara su SHA-1 con el ultimo registrado; si difiere, lo conserva y declara
   el motivo en el resultado.
-- Para habilitar esa limpieza deben estar seleccionados todos los archivos nuevos
+- Para activar esa limpieza automatica se seleccionan todos los archivos nuevos
   o cambiados del manifiesto actual. El backend vuelve a validar esta regla; una
   limpieza sin subidas tambien se permite cuando no hay cambios y hay obsoletos.
+- **Ver archivos del destino** consulta la carpeta real por FTP y permite elegir
+  individualmente que archivos respaldar y borrar, incluidos archivos sin historial
+  local de subidas. Puedes navegar por subcarpetas y por el destino `public`
+  separado de Laravel; la seleccion conserva las rutas completas y se revisa
+  antes de confirmar. Esta seleccion es alternativa a la limpieza automatica.
+  Los archivos presentes en el origen actual (por ejemplo `index.html` o un
+  `main.js` de nombre fijo) no se borran: se reemplazan al subirlos. Carpetas,
+  enlaces, exclusiones, datos protegidos y `_deploys` no se pueden borrar.
+  No se requiere subir todos los cambiados para una seleccion manual: revisa que
+  los chunks elegidos ya no sean necesarios por la version publicada.
+- La API acepta `delete_files: ["chunk-anterior.js", "assets/archivo-viejo.js"]`
+  (hasta 1000 rutas relativas al origen; `public/` para el destino separado).
+  Se valida el listado remoto al crear el deploy y el tipo de archivo antes
+  de borrarlo. Cada elegido se descarga primero, se registra su hash y respaldo,
+  y se elimina despues de las subidas. Una falla de respaldo impide el borrado.
+  El listado se consulta en `GET /api/projects/{id}/remote-files` con `server_id`,
+  `destination=backend|public` y `path` relativo a ese destino.
+  Para actualizar una instalacion existente, ejecuta `php artisan migrate` y
+  reinicia el worker para cargar el codigo nuevo.
 - Al finalizar correctamente, se crea un nombre unico como
   `deploy_v1.4.2_20261004_175900.json` dentro de
   `{destino}/_deploys/`. Se agrega `Require all denied` en `_deploys/.htaccess`

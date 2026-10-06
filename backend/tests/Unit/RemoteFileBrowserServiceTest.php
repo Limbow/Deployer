@@ -91,6 +91,39 @@ class RemoteFileBrowserServiceTest extends TestCase
         }
     }
 
+    public function test_verifies_a_regular_file_without_modifying_it(): void
+    {
+        $server = $this->server();
+        $client = Mockery::mock(NativeFtpClient::class);
+        $connection = Mockery::mock(FtpConnection::class);
+        $connection->shouldReceive('open')->once();
+        $client->shouldReceive('changeDirectory')->once()->with('/')->andReturn(true);
+        $client->shouldReceive('listMlsd')->once()->with('.')->andReturn([['name' => 'assets', 'type' => 'dir']]);
+        $client->shouldReceive('listMlsd')->once()->with('assets')->andReturn([['name' => 'old.js', 'type' => 'file']]);
+        $client->shouldNotReceive('delete');
+        $client->shouldNotReceive('download');
+        $client->shouldReceive('close')->once()->andReturn(true);
+
+        (new RemoteFileBrowserService($client, $connection))->verifyFile($server, 'assets/old.js');
+        $this->assertTrue(true);
+    }
+
+    public function test_verification_rejects_symlink_ancestors_and_closes_the_connection(): void
+    {
+        $server = $this->server();
+        $client = Mockery::mock(NativeFtpClient::class);
+        $connection = Mockery::mock(FtpConnection::class);
+        $connection->shouldReceive('open')->once();
+        $client->shouldReceive('changeDirectory')->once()->with('/')->andReturn(true);
+        $client->shouldReceive('listMlsd')->once()->with('.')->andReturn([['name' => 'assets', 'type' => 'OS.unix=slink:/outside']]);
+        $client->shouldNotReceive('delete');
+        $client->shouldNotReceive('download');
+        $client->shouldReceive('close')->once()->andReturn(true);
+
+        $this->expectException(ValidationException::class);
+        (new RemoteFileBrowserService($client, $connection))->verifyFile($server, 'assets/old.js');
+    }
+
     public function test_uses_raw_listing_when_mlsd_is_not_supported(): void
     {
         $server = $this->server();

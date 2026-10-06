@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { exhaustMap, finalize, Subscription, timer } from 'rxjs';
 import { Deploy, DeployApi, DeployInput, DeployStatus } from '../deploys/deploy-api';
 import { errorMessage } from '../shared/api-error';
-import { FileApi, FileManifest, FileNode, selectableTree } from './file-api';
+import { DeployRemoteDirectory, DeployRemoteEntry, FileApi, FileManifest, FileNode, selectableTree } from './file-api';
 import { FileTree } from './file-tree';
 
 @Component({
@@ -27,6 +27,7 @@ export class FileSelection {
   private request?: Subscription;
   private activeDeployRequest?: Subscription;
   private polling?: Subscription;
+  private remoteRequest?: Subscription;
   private parentActivity = false;
   readonly deployActivity = output<boolean>();
   readonly loading = signal(false);
@@ -43,6 +44,11 @@ export class FileSelection {
   readonly version = signal('');
   readonly changes = signal('');
   readonly deleteObsolete = signal(false);
+  readonly remoteDirectory = signal<DeployRemoteDirectory | null>(null);
+  readonly remoteLoading = signal(false);
+  readonly remoteError = signal('');
+  readonly deleteFiles = signal<ReadonlyMap<string, string>>(new Map());
+  readonly deletionSelection = computed(() => [...this.deleteFiles()].map(([path, remote]) => ({ path, remote })));
   readonly confirmDeploy = signal(false);
   readonly tree = computed(() => {
     const prune = (nodes: FileNode[]): FileNode[] => nodes.filter((node) => this.showIgnored() || !node.ignored)
@@ -58,9 +64,9 @@ export class FileSelection {
   readonly canDeploy = computed(() => {
     const current = this.manifest();
     const hasFiles = this.selectedFiles().length > 0;
-    const cleanOnly = this.deleteObsolete() && (current?.obsolete_files.length ?? 0) > 0;
+    const cleanOnly = (this.deleteObsolete() && (current?.obsolete_files.length ?? 0) > 0) || this.deleteFiles().size > 0;
     return !!current && this.enabled() && this.serverId() > 0 && !this.loading() && !this.deployLoading()
-      && !this.deploySubmitting() && !this.deployActive() && this.deploy()?.status !== 'success'
+      && !this.deploySubmitting() && !this.remoteLoading() && !this.deployActive() && this.deploy()?.status !== 'success'
       && this.isVersionValid() && (hasFiles || cleanOnly)
       && (!this.deleteObsolete() || this.canCleanObsolete())
       && this.confirmDeploy();
@@ -84,6 +90,11 @@ export class FileSelection {
     this.request?.unsubscribe();
     this.activeDeployRequest?.unsubscribe();
     this.polling?.unsubscribe();
+    this.remoteRequest?.unsubscribe();
+    this.remoteDirectory.set(null);
+    this.remoteLoading.set(false);
+    this.remoteError.set('');
+    this.deleteFiles.set(new Map());
     this.manifest.set(null);
     this.selected.set(new Set());
     this.error.set('');
@@ -148,7 +159,48 @@ export class FileSelection {
   }
 
   setDeleteObsolete(value: boolean): void {
+    if (value) {
+      const selected = new Set(this.selected());
+      for (const file of this.manifest()?.files ?? []) {
+        if (file.changed) selected.add(file.path);
+      }
+      this.selected.set(selected);
+      this.deleteFiles.set(new Map());
+    }
     this.deleteObsolete.set(value);
+    this.confirmDeploy.set(false);
+  }
+
+  loadRemote(destination: 'backend' | 'public' = 'backend', path = ''): void {
+    if (!this.manifest() || !this.enabled() || this.remoteLoading() || this.deployActive() || this.deploySubmitting()) return;
+    this.remoteLoading.set(true);
+    this.remoteError.set('');
+    this.remoteRequest = this.api.remote(this.projectId(), this.serverId(), destination, path)
+      .pipe(takeUntilDestroyed(this.destroyRef), finalize(() => this.remoteLoading.set(false)))
+      .subscribe({
+        next: ({ data }) => this.remoteDirectory.set(data),
+        error: (error: unknown) => this.remoteError.set(errorMessage(error)),
+      });
+  }
+
+  toggleRemote(entry: DeployRemoteEntry, checked: boolean): void {
+    if (!this.enabled() || this.remoteLoading() || this.deployActive() || this.deploySubmitting()
+      || entry.type !== 'file' || entry.deletion_reason !== null) return;
+    const current = this.remoteDirectory();
+    if (!current || !current.entries.includes(entry)) return;
+    const selected = new Map(this.deleteFiles());
+    if (checked) selected.set(entry.publish_path, `${current.remote_path.replace(/\/$/, '')}/${entry.name}`);
+    else selected.delete(entry.publish_path);
+    this.deleteFiles.set(selected);
+    this.deleteObsolete.set(false);
+    this.confirmDeploy.set(false);
+  }
+
+  removeDeletion(path: string): void {
+    if (this.deployActive() || this.deploySubmitting()) return;
+    const selected = new Map(this.deleteFiles());
+    selected.delete(path);
+    this.deleteFiles.set(selected);
     this.confirmDeploy.set(false);
   }
 
@@ -162,6 +214,7 @@ export class FileSelection {
       changes: this.changes(),
       delete_obsolete: this.deleteObsolete(),
       files: this.selectedFiles().map((file) => file.path),
+      ...(this.deleteFiles().size > 0 ? { delete_files: [...this.deleteFiles().keys()] } : {}),
     };
     this.deployError.set('');
     this.deployPollFailed.set(false);

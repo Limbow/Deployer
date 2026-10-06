@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Exceptions\FileManifestException;
+use App\Exceptions\FtpConnectionException;
 use App\Exceptions\ProjectScanException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\DeployRequest;
@@ -12,6 +13,7 @@ use App\Models\Deploy;
 use App\Models\Project;
 use App\Services\FileDiffService;
 use App\Services\LocalPath;
+use App\Services\ProjectRemoteFilesService;
 use App\Services\PublishPath;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -58,7 +60,7 @@ class DeployController extends Controller
         ]);
     }
 
-    public function store(DeployRequest $request, FileDiffService $diff, PublishPath $paths): JsonResponse
+    public function store(DeployRequest $request, FileDiffService $diff, PublishPath $paths, ProjectRemoteFilesService $remoteFiles): JsonResponse
     {
         if (config('queue.default') !== 'database' || (int) config('queue.connections.database.retry_after') <= 3660) {
             throw ValidationException::withMessages(['queue' => 'Configura QUEUE_CONNECTION=database y DB_QUEUE_RETRY_AFTER=3700 para desplegar sin bloquear o duplicar jobs.']);
@@ -102,7 +104,16 @@ class DeployController extends Controller
             return $file;
         });
         $deleteObsolete = (bool) ($values['delete_obsolete'] ?? false);
-        if ($selected->isEmpty() && (! $deleteObsolete || $manifest['obsolete_files'] === [])) {
+        if ($deleteObsolete && ! empty($values['delete_files'])) {
+            throw ValidationException::withMessages(['delete_files' => 'Elige limpieza automatica o seleccion individual, no ambas.']);
+        }
+        try {
+            $manualDeletions = $remoteFiles->selected($project, $server, $values['delete_files'] ?? []);
+        } catch (FtpConnectionException $exception) {
+            Log::warning('No se pudo validar la seleccion remota.', ['project_id' => $project->id, 'server_id' => $server->id, 'message' => $exception->getMessage()]);
+            throw ValidationException::withMessages(['delete_files' => $exception->getMessage()]);
+        }
+        if ($selected->isEmpty() && $manualDeletions === [] && (! $deleteObsolete || $manifest['obsolete_files'] === [])) {
             throw ValidationException::withMessages(['files' => 'Selecciona al menos un archivo para desplegar o activa la limpieza de archivos obsoletos.']);
         }
         if ($deleteObsolete) {
@@ -113,7 +124,7 @@ class DeployController extends Controller
             }
         }
 
-        $deploy = DB::transaction(function () use ($project, $server, $values, $manifest, $selected, $build, $deleteObsolete, $paths): Deploy {
+        $deploy = DB::transaction(function () use ($project, $server, $values, $manifest, $selected, $build, $deleteObsolete, $manualDeletions, $paths): Deploy {
             $lockedProject = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
             $lockedServer = $lockedProject->servers()->where('servers.id', $server->id)->lockForUpdate()->first();
             if ($lockedServer === null) {
@@ -138,7 +149,7 @@ class DeployController extends Controller
                 'version' => $values['version'], 'changes' => $values['changes'] ?? null,
                 'status' => 'queued', 'progress' => 0, 'log' => '',
                 'remote_path' => $manifest['destinations']['backend'], 'public_remote_path' => $manifest['destinations']['public'],
-                'delete_obsolete' => $deleteObsolete,
+                'delete_obsolete' => $deleteObsolete || $manualDeletions !== [],
             ]);
             foreach ($selected as $file) {
                 $deploy->files()->create([
@@ -154,6 +165,13 @@ class DeployController extends Controller
                         'hash' => $file['hash'], 'size' => $file['size'], 'status' => 'pending_delete',
                     ]);
                 }
+            }
+            foreach ($manualDeletions as $file) {
+                $deploy->files()->create([
+                    'relative_path' => $file['path'], 'remote_path' => $file['remote_path'],
+                    'hash' => $file['hash'], 'size' => $file['size'], 'status' => 'pending_delete',
+                    'manual_delete' => true,
+                ]);
             }
             DeployJob::dispatch($deploy->id);
 

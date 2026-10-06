@@ -160,7 +160,7 @@ describe('FileSelection', () => {
     expect(component.deploy()?.status).toBe('success');
   });
 
-  it('keeps obsolete cleanup disabled until every changed file is selected', async () => {
+  it('allows enabling automatic cleanup and selects all changed files without blocking the checkbox', async () => {
     load({
       ...manifest,
       obsolete_files: [{ path: 'old-chunk.js', remote_path: '/public_html/site/old-chunk.js', hash: 'old', size: 8 }],
@@ -171,13 +171,85 @@ describe('FileSelection', () => {
     await fixture.whenStable();
     const cleanup = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('#deploy-delete-obsolete')!;
     expect(component.canCleanObsolete()).toBe(false);
-    expect(cleanup.disabled).toBe(true);
+    expect(cleanup.disabled).toBe(false);
 
-    component.choose('changed');
+    component.setDeleteObsolete(true);
+    expect([...component.selected()]).toEqual(['index.html', 'assets/logo.svg']);
     fixture.detectChanges();
     await fixture.whenStable();
     expect(component.canCleanObsolete()).toBe(true);
     expect(cleanup.disabled).toBe(false);
+  });
+
+  it('browses the destination and posts only individually selected remote deletions', async () => {
+    load();
+    component.loadRemote();
+    http.expectOne('/api/projects/1/remote-files?server_id=2&destination=backend').flush({
+      data: {
+        destination: 'backend', path: '', remote_path: '/public_html/site', parent_path: null,
+        entries: [
+          { name: 'old-chunk.js', relative_path: 'public_html/site/old-chunk.js', publish_path: 'old-chunk.js', type: 'file', size: 8, modified: null, deletion_reason: null },
+          { name: 'index.html', relative_path: 'public_html/site/index.html', publish_path: 'index.html', type: 'file', size: 10, modified: null, deletion_reason: 'Existe en el origen actual' },
+          { name: 'other-chunk.js', relative_path: 'public_html/site/other-chunk.js', publish_path: 'other-chunk.js', type: 'file', size: 8, modified: null, deletion_reason: null },
+        ],
+      },
+    });
+    const entries = component.remoteDirectory()!.entries;
+    component.toggleRemote(entries[0], true);
+    component.toggleRemote(entries[1], true);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const element: HTMLElement = fixture.nativeElement;
+    expect(element.querySelector<HTMLInputElement>('[aria-label="Borrar index.html"]')?.disabled).toBe(true);
+    expect([...component.deleteFiles().keys()]).toEqual(['old-chunk.js']);
+    component.choose('none');
+    component.setVersion('1.0.2');
+    component.confirmDeploy.set(true);
+    expect(component.canDeploy()).toBe(true);
+    component.startDeploy();
+    const request = http.expectOne('/api/deploys');
+    expect(request.request.body.delete_files).toEqual(['old-chunk.js']);
+    expect(request.request.body.files).toEqual([]);
+    expect(request.request.body.delete_obsolete).toBe(false);
+    request.flush({ data: deploy('success') });
+  });
+
+  it('surfaces remote browsing errors and clears deletion selections when the server changes', () => {
+    load();
+    component.loadRemote();
+    http.expectOne('/api/projects/1/remote-files?server_id=2&destination=backend')
+      .flush({ message: 'No se pudo listar la carpeta remota.' }, { status: 502, statusText: 'Bad Gateway' });
+    expect(component.remoteLoading()).toBe(false);
+    expect(component.remoteError()).toContain('No se pudo listar');
+    component.deleteFiles.set(new Map([['old.js', '/public_html/site/old.js']]));
+    fixture.componentRef.setInput('serverId', 3);
+    fixture.detectChanges();
+    expect(component.deleteFiles().size).toBe(0);
+    expect(component.remoteDirectory()).toBeNull();
+  });
+
+  it('retains selections across remote directories and invalidates confirmation when removing a deletion', () => {
+    load();
+    const rootEntry = { name: 'old.js', relative_path: 'public_html/site/old.js', publish_path: 'old.js', type: 'file' as const, size: 8, modified: null, deletion_reason: null };
+    component.loadRemote();
+    http.expectOne('/api/projects/1/remote-files?server_id=2&destination=backend').flush({
+      data: { destination: 'backend', path: '', remote_path: '/public_html/site', parent_path: null, entries: [rootEntry] },
+    });
+    component.toggleRemote(component.remoteDirectory()!.entries[0], true);
+    component.loadRemote('backend', 'assets');
+    http.expectOne('/api/projects/1/remote-files?server_id=2&destination=backend&path=assets').flush({
+      data: { destination: 'backend', path: 'assets', remote_path: '/public_html/site/assets', parent_path: '', entries: [{ ...rootEntry, publish_path: 'assets/old.js' }] },
+    });
+    component.toggleRemote(component.remoteDirectory()!.entries[0], true);
+    expect([...component.deleteFiles().keys()]).toEqual(['old.js', 'assets/old.js']);
+    component.confirmDeploy.set(true);
+    component.removeDeletion('old.js');
+    expect(component.confirmDeploy()).toBe(false);
+    expect([...component.deleteFiles().keys()]).toEqual(['assets/old.js']);
+    component.choose('all');
+    component.setDeleteObsolete(true);
+    expect(component.selectedFiles()).toHaveLength(3);
+    expect(component.deleteFiles().size).toBe(0);
   });
 
   it('recovers and resumes polling an active deploy when the file manifest is loaded again', () => {
